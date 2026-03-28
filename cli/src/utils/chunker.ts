@@ -46,7 +46,17 @@ export function chunkText(
           sub += (sub ? " " : "") + sentence;
         }
       }
-      if (sub.trim()) result.push(sub.trim());
+      if (sub.trim()) {
+        // If still too long (no sentence boundaries), hard split at word boundaries
+        let remaining = sub.trim();
+        while (remaining.length > maxChars) {
+          const splitAt = remaining.lastIndexOf(" ", maxChars);
+          const cutPoint = splitAt > 0 ? splitAt : maxChars;
+          result.push(remaining.slice(0, cutPoint).trim());
+          remaining = remaining.slice(cutPoint).trim();
+        }
+        if (remaining) result.push(remaining);
+      }
     }
   }
 

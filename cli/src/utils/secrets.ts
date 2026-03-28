@@ -14,7 +14,7 @@ const PATTERNS: RegExp[] = [
   /Bearer\s+[a-zA-Z0-9._\-\/+=]{20,}/gi,
 
   // Connection strings with passwords
-  /(?:postgres|mysql|mongodb|redis):\/\/[^:]+:[^@]+@[^\s"']+/gi,
+  /(?:postgres(?:ql)?|mysql|mongodb|redis):\/\/[^:]+:[^@]+@[^\s"']+/gi,
 
   // Generic KEY=value patterns (env vars)
   /(?:API_KEY|SECRET|TOKEN|PASSWORD|PRIVATE_KEY|ACCESS_KEY|AUTH)\s*[=:]\s*['"]?[a-zA-Z0-9._\-\/+=]{8,}['"]?/gi,
