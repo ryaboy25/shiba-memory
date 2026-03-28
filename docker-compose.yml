@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: ccb-postgres
+    environment:
+      POSTGRES_DB: ccb
+      POSTGRES_USER: ccb
+      POSTGRES_PASSWORD: ${CCB_DB_PASSWORD:-ccb_dev_password}
+    ports:
+      - "${CCB_DB_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./schema:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ccb -d ccb"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:
