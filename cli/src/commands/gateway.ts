@@ -138,6 +138,74 @@ export function startGateway(): void {
         return;
       }
 
+      // POST /webhook -- Generic webhook receiver for external integrations
+      // Accepts any JSON payload and queues it as an event
+      if (url === "/webhook" && req.method === "POST") {
+        const body = await parseBody(req);
+        const source = (body.source as string)
+          || req.headers["x-webhook-source"] as string
+          || "webhook";
+        const eventType = (body.event_type as string)
+          || (body.type as string)
+          || "webhook";
+
+        await query(
+          `INSERT INTO events_queue (source, event_type, payload)
+           VALUES ($1, $2, $3::jsonb)`,
+          [source, eventType, JSON.stringify(body)]
+        );
+
+        // Also store as a memory if it looks important
+        const message = (body.message as string)
+          || (body.text as string)
+          || (body.content as string);
+
+        if (message && message.length > 20) {
+          await remember({
+            type: "episode",
+            title: `Webhook: ${source} ${eventType}`,
+            content: message.slice(0, 2000),
+            tags: ["webhook", source, eventType],
+            importance: 0.5,
+            source: "gateway",
+            expiresIn: "7d",
+          });
+        }
+
+        respond(res, 200, { status: "ok", queued: true, source, event_type: eventType });
+        return;
+      }
+
+      // POST /channel -- Claude Code Channels integration endpoint
+      // Receives messages from Telegram, Discord, etc via Claude Code Channels
+      if (url === "/channel" && req.method === "POST") {
+        const body = await parseBody(req);
+        const channel = (body.channel as string) || "unknown";
+        const sender = (body.sender as string) || "unknown";
+        const message = (body.message as string) || JSON.stringify(body);
+
+        // Queue as event
+        await query(
+          `INSERT INTO events_queue (source, event_type, payload)
+           VALUES ($1, 'channel_message', $2::jsonb)`,
+          [`channel:${channel}`, JSON.stringify({ channel, sender, message })]
+        );
+
+        // Store as episode memory
+        await remember({
+          type: "episode",
+          title: `Channel message from ${sender} via ${channel}`,
+          content: message.slice(0, 2000),
+          tags: ["channel", channel, sender],
+          importance: 0.6,
+          source: "gateway",
+          expiresIn: "30d",
+        });
+
+        respond(res, 200, { status: "ok", channel, sender, queued: true });
+        return;
+      }
+
       respond(res, 404, { status: "error", message: "Not found" });
     } catch (e) {
       respond(res, 500, { status: "error", message: (e as Error).message });
@@ -158,6 +226,8 @@ export function startGateway(): void {
         "POST /event",
         "GET  /events",
         "POST /events/process",
+        "POST /webhook",
+        "POST /channel",
       ],
     }));
   });
