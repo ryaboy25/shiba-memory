@@ -9,11 +9,11 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: resolve(__dirname, "../../.env") });
 
 const pool = new pg.Pool({
-  host: process.env.CCB_DB_HOST || "localhost",
-  port: parseInt(process.env.CCB_DB_PORT || "5432"),
-  database: process.env.CCB_DB_NAME || "ccb",
-  user: process.env.CCB_DB_USER || "ccb",
-  password: process.env.CCB_DB_PASSWORD || "ccb_dev_password",
+  host: process.env.SHB_DB_HOST || "localhost",
+  port: parseInt(process.env.SHB_DB_PORT || "5432"),
+  database: process.env.SHB_DB_NAME || "shb",
+  user: process.env.SHB_DB_USER || "shb",
+  password: process.env.SHB_DB_PASSWORD || "shb_dev_password",
   max: 5,
   idleTimeoutMillis: 30000,
 });

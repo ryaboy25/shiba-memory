@@ -4,7 +4,6 @@ import { resolve, basename, dirname } from "path";
 import { fileURLToPath } from "url";
 import { createInterface } from "readline";
 import { remember } from "./remember.js";
-import { installHooks } from "./hooks.js";
 import { ingestGit } from "./ingest/git.js";
 import { query, disconnect } from "../db.js";
 
@@ -134,10 +133,10 @@ async function checkPrerequisites(): Promise<boolean> {
       print("  ⟳ Installing Ollama...");
       print("  Run this in your terminal: curl -fsSL https://ollama.com/install.sh | sudo sh");
       print("  Then: ollama serve & ollama pull nomic-embed-text");
-      print("  Then re-run: ccb setup");
+      print("  Then re-run: shb setup");
       allGood = false;
     } else {
-      print("  You can use OpenAI embeddings instead. Set CCB_EMBEDDING_PROVIDER=openai in .env");
+      print("  You can use OpenAI embeddings instead. Set SHB_EMBEDDING_PROVIDER=openai in .env");
     }
   }
 
@@ -168,9 +167,9 @@ async function setupDatabase(): Promise<boolean> {
   // Update .env with port
   if (existsSync(envPath)) {
     let env = readFileSync(envPath, "utf-8");
-    env = env.replace(/CCB_DB_PORT=\d+/, `CCB_DB_PORT=${port}`);
-    if (!env.includes("CCB_EMBEDDING_PROVIDER=ollama")) {
-      env = env.replace(/CCB_EMBEDDING_PROVIDER=\w+/, "CCB_EMBEDDING_PROVIDER=ollama");
+    env = env.replace(/SHB_DB_PORT=\d+/, `SHB_DB_PORT=${port}`);
+    if (!env.includes("SHB_EMBEDDING_PROVIDER=ollama")) {
+      env = env.replace(/SHB_EMBEDDING_PROVIDER=\w+/, "SHB_EMBEDDING_PROVIDER=ollama");
     }
     writeFileSync(envPath, env);
   }
@@ -189,7 +188,7 @@ async function setupDatabase(): Promise<boolean> {
   let ready = false;
   for (let i = 0; i < 30; i++) {
     try {
-      execSync(`docker exec ccb-postgres pg_isready -U ccb -d ccb 2>/dev/null`, { encoding: "utf-8" });
+      execSync(`docker exec shb-postgres pg_isready -U shb -d shb 2>/dev/null`, { encoding: "utf-8" });
       ready = true;
       break;
     } catch {
@@ -204,7 +203,7 @@ async function setupDatabase(): Promise<boolean> {
 
   // Set SCRAM password (Docker pgvector quirk)
   try {
-    execSync(`docker exec ccb-postgres psql -U ccb -d ccb -c "SET password_encryption = 'scram-sha-256'; ALTER USER ccb WITH PASSWORD 'ccb_dev_password';"`, { encoding: "utf-8" });
+    execSync(`docker exec shb-postgres psql -U shb -d shb -c "SET password_encryption = 'scram-sha-256'; ALTER USER shb WITH PASSWORD 'shb_dev_password';"`, { encoding: "utf-8" });
   } catch { /* ignore if fails */ }
 
   // Verify connection from CLI
@@ -229,7 +228,7 @@ async function collectPersonalInfo(): Promise<void> {
   const company = await ask("Where do you work?");
   const expertise = await ask("What are your areas of expertise? (comma-separated)");
   const languages = await ask("What programming languages do you use? (comma-separated)");
-  const tools = await ask("What AI tools do you use? (e.g. Claude Code, ChatGPT)");
+  const tools = await ask("What AI tools do you use? (e.g. Hermes, ChatGPT, Claude)");
   const spokenLangs = await ask("What languages do you speak? (e.g. English, Spanish)");
   const education = await ask("Education? (e.g. BS Computer Science, MIT 2020)");
   const hobbies = await ask("Hobbies or interests outside work?");
@@ -398,21 +397,28 @@ async function scanProjects(): Promise<void> {
   success(`Total: ${totalStored} project memories stored`);
 }
 
-async function setupHooks(): Promise<void> {
-  header(5, 7, "Claude Code Hooks");
-  print("  Hooks let the brain auto-learn from every Claude Code session.");
-  print("  - SessionStart: injects relevant memories into context");
-  print("  - PostToolUse: captures important actions automatically");
-  print("  - Stop: tracks conversation sessions");
-  print("  - PostCompact: re-injects memories after context compression\n");
+async function setupGateway(): Promise<void> {
+  header(5, 7, "Gateway API");
+  print("  The gateway is an HTTP API that lets your AI agent talk to the brain.");
+  print("  Default: http://0.0.0.0:18789\n");
 
-  const install = await askYesNo("Install Claude Code hooks?");
-
-  if (install) {
-    const result = installHooks();
-    success(`Installed ${result.installed.length} hooks: ${result.installed.join(", ")}`);
+  const setKey = await askYesNo("Set an API key for the gateway?");
+  if (setKey) {
+    const key = await ask("Enter an API key (or press Enter for a random one)");
+    const envPath = resolve(PROJECT_ROOT, ".env");
+    if (existsSync(envPath)) {
+      let env = readFileSync(envPath, "utf-8");
+      const apiKey = key || Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+      if (env.includes("SHB_API_KEY=")) {
+        env = env.replace(/SHB_API_KEY=.*/, `SHB_API_KEY=${apiKey}`);
+      } else {
+        env += `\n# Gateway authentication\nSHB_API_KEY=${apiKey}\n`;
+      }
+      writeFileSync(envPath, env);
+      success(`API key set: ${apiKey}`);
+    }
   } else {
-    print("  Skipped. You can install later with: ccb hooks install");
+    print("  Gateway will run without auth. Set SHB_API_KEY in .env later to secure it.");
   }
 }
 
@@ -421,7 +427,7 @@ async function buildCli(): Promise<void> {
 
   const cliDir = resolve(PROJECT_ROOT, "cli");
 
-  print("  ⟳ Building ccb CLI...");
+  print("  ⟳ Building shb CLI...");
   try {
     execSync(`cd "${cliDir}" && npm run build 2>&1`, { encoding: "utf-8" });
     success("CLI built successfully");
@@ -431,13 +437,13 @@ async function buildCli(): Promise<void> {
 
   // Check if globally linked
   try {
-    execSync("which ccb 2>/dev/null", { encoding: "utf-8" });
-    success("ccb command available globally");
+    execSync("which shb 2>/dev/null", { encoding: "utf-8" });
+    success("shb command available globally");
   } catch {
-    print("  ⟳ Linking ccb globally...");
+    print("  ⟳ Linking shb globally...");
     try {
       execSync(`cd "${cliDir}" && npm link 2>&1`, { encoding: "utf-8" });
-      success("ccb command linked globally");
+      success("shb command linked globally");
     } catch {
       print("  Could not link globally. Run: cd cli && sudo npm link");
     }
@@ -463,17 +469,18 @@ async function verify(): Promise<void> {
     success("Brain is ready!");
 
     print("\n  ╔══════════════════════════════════════════╗");
-    print("  ║  Claude Code Brain is set up!             ║");
+    print("  ║  SHB Brain is set up!                     ║");
     print("  ╚══════════════════════════════════════════╝");
     print("");
     print("  Quick start:");
-    print("    ccb recall \"what do you know about me\"");
-    print("    ccb reflect stats");
-    print("    ccb ingest news --dry-run");
-    print("    ccb reflect consolidate");
+    print("    shb gateway start              # Start the HTTP API");
+    print("    shb recall \"what do you know about me\"");
+    print("    shb reflect stats");
+    print("    shb reflect consolidate");
     print("");
-    print("  The brain auto-learns from Claude Code sessions via hooks.");
-    print("  Run 'ccb setup' again anytime to update your profile.\n");
+    print("  Your AI agent talks to the brain via the gateway API.");
+    print("  Default: http://0.0.0.0:18789");
+    print("  Run 'shb setup' again anytime to update your profile.\n");
   } catch (e) {
     fail(`Verification failed: ${(e as Error).message}`);
   }
@@ -484,17 +491,17 @@ async function verify(): Promise<void> {
 export async function runSetup(): Promise<void> {
   console.log("");
   console.log("  ╔══════════════════════════════════════════╗");
-  console.log("  ║  Claude Code Brain — Setup Wizard        ║");
+  console.log("  ║  SHB — Brain Setup Wizard                ║");
   console.log("  ╚══════════════════════════════════════════╝");
   console.log("");
-  console.log("  This wizard will set up your personal AI brain.");
+  console.log("  This wizard will set up your persistent AI memory brain.");
   console.log("  It takes about 5 minutes.\n");
 
   try {
     // Step 1: Prerequisites
     const prereqsOk = await checkPrerequisites();
     if (!prereqsOk) {
-      print("\n  Fix the prerequisites above and re-run: ccb setup");
+      print("\n  Fix the prerequisites above and re-run: shb setup");
       rl.close();
       await disconnect();
       return;
@@ -503,7 +510,7 @@ export async function runSetup(): Promise<void> {
     // Step 2: Database
     const dbOk = await setupDatabase();
     if (!dbOk) {
-      print("\n  Fix the database issue above and re-run: ccb setup");
+      print("\n  Fix the database issue above and re-run: shb setup");
       rl.close();
       await disconnect();
       return;
@@ -515,8 +522,8 @@ export async function runSetup(): Promise<void> {
     // Step 4: Projects
     await scanProjects();
 
-    // Step 5: Hooks
-    await setupHooks();
+    // Step 5: Gateway
+    await setupGateway();
 
     // Step 6: Build
     await buildCli();

@@ -2,7 +2,7 @@ import { describe, it, expect, afterAll, beforeAll } from "vitest";
 import { startGateway, stopGateway, gatewayStatus } from "../commands/gateway.js";
 
 const PORT = 18799; // Use different port to avoid conflicts
-process.env.CCB_GATEWAY_PORT = String(PORT);
+process.env.SHB_GATEWAY_PORT = String(PORT);
 
 // We test the gateway functions directly instead of HTTP
 // since starting the server in tests is complex

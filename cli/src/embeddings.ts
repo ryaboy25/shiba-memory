@@ -1,4 +1,4 @@
-const PROVIDER = process.env.CCB_EMBEDDING_PROVIDER || "ollama";
+const PROVIDER = process.env.SHB_EMBEDDING_PROVIDER || "ollama";
 const DIMENSIONS = 512;
 
 interface EmbeddingProvider {
@@ -7,8 +7,8 @@ interface EmbeddingProvider {
 
 const ollama: EmbeddingProvider = {
   async embed(text: string): Promise<number[]> {
-    const url = process.env.CCB_OLLAMA_URL || "http://localhost:11434";
-    const model = process.env.CCB_OLLAMA_MODEL || "nomic-embed-text";
+    const url = process.env.SHB_OLLAMA_URL || "http://localhost:11434";
+    const model = process.env.SHB_OLLAMA_MODEL || "nomic-embed-text";
 
     const res = await fetch(`${url}/api/embed`, {
       method: "POST",
@@ -31,10 +31,10 @@ const ollama: EmbeddingProvider = {
 
 const openai: EmbeddingProvider = {
   async embed(text: string): Promise<number[]> {
-    const key = process.env.CCB_OPENAI_API_KEY;
-    if (!key) throw new Error("CCB_OPENAI_API_KEY is required for openai provider");
+    const key = process.env.SHB_OPENAI_API_KEY;
+    if (!key) throw new Error("SHB_OPENAI_API_KEY is required for openai provider");
 
-    const model = process.env.CCB_OPENAI_MODEL || "text-embedding-3-small";
+    const model = process.env.SHB_OPENAI_MODEL || "text-embedding-3-small";
 
     const res = await fetch("https://api.openai.com/v1/embeddings", {
       method: "POST",

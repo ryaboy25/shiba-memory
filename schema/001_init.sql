@@ -1,5 +1,5 @@
 -- ==========================================================
--- Claude Code Brain (CCB) — Initial Schema
+-- SHB — Initial Schema
 -- PostgreSQL 16 + pgvector
 -- ==========================================================
 

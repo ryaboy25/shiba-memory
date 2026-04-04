@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
-echo "=== Claude Code Brain (CCB) Setup ==="
+echo "=== SHB — Brain Setup ==="
 echo ""
 
 # 1. Check prerequisites
@@ -39,7 +39,7 @@ echo "Starting PostgreSQL with pgvector..."
 cd "$PROJECT_DIR"
 docker compose up -d
 echo "  Waiting for database to be healthy..."
-until docker compose exec postgres pg_isready -U ccb -d ccb &>/dev/null; do
+until docker compose exec postgres pg_isready -U shb -d shb &>/dev/null; do
   sleep 1
 done
 echo "  Database is ready."
@@ -56,22 +56,21 @@ npm run build
 echo ""
 
 # 5. Link CLI globally
-echo "Linking ccb command globally..."
+echo "Linking shb command globally..."
 npm link
 echo ""
 
 # 6. Verify
 echo "Running health check..."
-ccb health
+shb health
 echo ""
 
-echo "=== CCB Setup Complete ==="
+echo "=== SHB Setup Complete ==="
 echo ""
 echo "Usage:"
-echo "  ccb remember --type user --title 'My Role' --content 'I am a DB engineer'"
-echo "  ccb recall 'what does the user do'"
-echo "  ccb reflect stats"
-echo "  ccb health"
+echo "  shb remember --type user --title 'My Role' --content 'I am a DB engineer'"
+echo "  shb recall 'what does the user do'"
+echo "  shb reflect stats"
+echo "  shb gateway start"
+echo "  shb health"
 echo ""
-echo "To install Claude Code skills, copy the skills/*.md files to your"
-echo "Claude Code skills directory (e.g. ~/.claude/skills/)."

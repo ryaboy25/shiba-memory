@@ -4,10 +4,14 @@ import { query, disconnect } from "../db.js";
 import { embed, pgVector } from "../embeddings.js";
 import { remember } from "./remember.js";
 import { recall } from "./recall.js";
-import { getStats } from "./reflect.js";
+import { forget } from "./forget.js";
+import { linkMemories, getRelated, autoLinkAll } from "./link.js";
+import { getStats, decayMemories, consolidate } from "./reflect.js";
 
-const PORT = parseInt(process.env.CCB_GATEWAY_PORT || "18789");
-const PID_FILE = "/tmp/ccb-gateway.pid";
+const PORT = parseInt(process.env.SHB_GATEWAY_PORT || "18789");
+const BIND_HOST = process.env.SHB_GATEWAY_HOST || "0.0.0.0";
+const API_KEY = process.env.SHB_API_KEY || "";
+const PID_FILE = "/tmp/shb-gateway.pid";
 
 function parseBody(req: IncomingMessage): Promise<Record<string, unknown>> {
   return new Promise((resolve) => {
@@ -28,6 +32,15 @@ function respond(res: ServerResponse, status: number, body: unknown) {
   res.end(JSON.stringify(body));
 }
 
+function authenticate(req: IncomingMessage, res: ServerResponse): boolean {
+  if (!API_KEY) return true; // No key configured = open access
+  const provided = req.headers["x-shb-key"] as string
+    || req.headers["authorization"]?.replace("Bearer ", "");
+  if (provided === API_KEY) return true;
+  respond(res, 401, { status: "error", message: "Unauthorized — set X-SHB-Key header" });
+  return false;
+}
+
 export function startGateway(): void {
   if (existsSync(PID_FILE)) {
     const pid = parseInt(readFileSync(PID_FILE, "utf-8").trim());
@@ -41,9 +54,18 @@ export function startGateway(): void {
   const server = createServer(async (req, res) => {
     // CORS
     res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, X-SHB-Key, Authorization");
     if (req.method === "OPTIONS") { res.writeHead(204); res.end(); return; }
+
+    // GET /health — lightweight, no auth required
+    if (req.url === "/health" && req.method === "GET") {
+      respond(res, 200, { status: "ok", uptime_seconds: Math.floor(process.uptime()) });
+      return;
+    }
+
+    // Auth check for all other endpoints
+    if (!authenticate(req, res)) return;
 
     const url = req.url || "/";
 
@@ -72,7 +94,10 @@ export function startGateway(): void {
           content: (body.content as string) || "",
           tags: (body.tags as string[]) || ["gateway"],
           importance: (body.importance as number) || 0.5,
-          source: "gateway",
+          source: (body.source as string) || "gateway",
+          expiresIn: body.expires_in as string | undefined,
+          profile: (body.profile as string) || undefined,
+          projectPath: body.project_path as string | undefined,
         });
         respond(res, 200, { status: "ok", id });
         return;
@@ -84,9 +109,105 @@ export function startGateway(): void {
         const results = await recall({
           query: (body.query as string) || "",
           type: body.type as string | undefined,
+          tags: body.tags as string[] | undefined,
           limit: (body.limit as number) || 5,
+          semanticWeight: body.semantic_weight as number | undefined,
+          fulltextWeight: body.fulltext_weight as number | undefined,
+          profile: body.profile as string | undefined,
+          project: body.project as string | undefined,
         });
         respond(res, 200, { status: "ok", count: results.length, memories: results });
+        return;
+      }
+
+      // POST /forget
+      if (url === "/forget" && req.method === "POST") {
+        const body = await parseBody(req);
+        const count = await forget({
+          id: body.id as string | undefined,
+          type: body.type as string | undefined,
+          olderThan: body.older_than as string | undefined,
+          lowConfidence: body.low_confidence as number | undefined,
+          expired: body.expired as boolean | undefined,
+        });
+        respond(res, 200, { status: "ok", deleted: count });
+        return;
+      }
+
+      // DELETE /memory/:id
+      if (url.startsWith("/memory/") && req.method === "DELETE") {
+        const id = url.slice("/memory/".length);
+        const count = await forget({ id });
+        respond(res, 200, { status: "ok", deleted: count });
+        return;
+      }
+
+      // GET /memory/:id
+      if (url.startsWith("/memory/") && req.method === "GET") {
+        const id = url.slice("/memory/".length);
+        const result = await query<{
+          id: string; type: string; title: string; content: string;
+          tags: string[]; importance: number; confidence: number;
+          metadata: Record<string, unknown>; profile: string;
+          project_path: string | null; created_at: string;
+          last_accessed_at: string | null; access_count: number;
+        }>(
+          `SELECT id, type, title, content, tags, importance, confidence,
+                  metadata, profile, project_path, created_at,
+                  last_accessed_at, access_count
+           FROM memories WHERE id = $1`, [id]
+        );
+        if (result.rows.length === 0) {
+          respond(res, 404, { status: "error", message: "Memory not found" });
+        } else {
+          await query(`SELECT touch_memory($1)`, [id]);
+          respond(res, 200, { status: "ok", memory: result.rows[0] });
+        }
+        return;
+      }
+
+      // POST /link
+      if (url === "/link" && req.method === "POST") {
+        const body = await parseBody(req);
+        const sourceId = body.source_id as string;
+        const targetId = body.target_id as string;
+        const relation = body.relation as string;
+        const strength = (body.strength as number) || 0.5;
+        if (!sourceId || !targetId || !relation) {
+          respond(res, 400, { status: "error", message: "source_id, target_id, and relation are required" });
+          return;
+        }
+        await linkMemories(sourceId, targetId, relation, strength);
+        respond(res, 200, { status: "ok" });
+        return;
+      }
+
+      // GET /links/:id
+      if (url.startsWith("/links/") && req.method === "GET") {
+        const id = url.slice("/links/".length);
+        const links = await getRelated(id);
+        respond(res, 200, { status: "ok", links });
+        return;
+      }
+
+      // POST /link/auto
+      if (url === "/link/auto" && req.method === "POST") {
+        const count = await autoLinkAll();
+        respond(res, 200, { status: "ok", links_created: count });
+        return;
+      }
+
+      // POST /reflect/consolidate
+      if (url === "/reflect/consolidate" && req.method === "POST") {
+        const result = await consolidate();
+        respond(res, 200, { status: "ok", ...result });
+        return;
+      }
+
+      // POST /reflect/decay
+      if (url === "/reflect/decay" && req.method === "POST") {
+        const result = await decayMemories();
+        respond(res, 200, { status: "ok", ...result });
         return;
       }
 
@@ -138,8 +259,7 @@ export function startGateway(): void {
         return;
       }
 
-      // POST /webhook -- Generic webhook receiver for external integrations
-      // Accepts any JSON payload and queues it as an event
+      // POST /webhook — Generic webhook receiver for external integrations
       if (url === "/webhook" && req.method === "POST") {
         const body = await parseBody(req);
         const source = (body.source as string)
@@ -176,8 +296,7 @@ export function startGateway(): void {
         return;
       }
 
-      // POST /channel -- Claude Code Channels integration endpoint
-      // Receives messages from Telegram, Discord, etc via Claude Code Channels
+      // POST /channel — Receives messages from external integrations
       if (url === "/channel" && req.method === "POST") {
         const body = await parseBody(req);
         const channel = (body.channel as string) || "unknown";
@@ -212,17 +331,28 @@ export function startGateway(): void {
     }
   });
 
-  server.listen(PORT, "127.0.0.1", () => {
+  server.listen(PORT, BIND_HOST, () => {
     writeFileSync(PID_FILE, String(process.pid));
     console.log(JSON.stringify({
       status: "ok",
-      message: "CCB Gateway started",
+      message: "SHB Gateway started",
       pid: process.pid,
+      host: BIND_HOST,
       port: PORT,
+      auth: API_KEY ? "enabled" : "disabled (set SHB_API_KEY to secure)",
       endpoints: [
+        "GET  /health",
         "GET  /status",
         "POST /remember",
         "POST /recall",
+        "POST /forget",
+        "GET  /memory/:id",
+        "DELETE /memory/:id",
+        "POST /link",
+        "GET  /links/:id",
+        "POST /link/auto",
+        "POST /reflect/consolidate",
+        "POST /reflect/decay",
         "POST /event",
         "GET  /events",
         "POST /events/process",

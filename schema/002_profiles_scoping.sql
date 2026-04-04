@@ -1,5 +1,5 @@
 -- ==========================================================
--- CCB v0.1 — Profiles, Scoping & Ingestion Support
+-- SHB v0.1 — Profiles, Scoping & Ingestion Support
 -- ==========================================================
 
 -- Profile scoping: memories can be global or project-specific

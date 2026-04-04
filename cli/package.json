@@ -1,10 +1,10 @@
 {
-  "name": "ccb",
+  "name": "shb",
   "version": "0.1.0",
-  "description": "Claude Code Brain — PostgreSQL-backed memory for Claude Code",
+  "description": "SHB — PostgreSQL-backed persistent memory for AI agents",
   "type": "module",
   "bin": {
-    "ccb": "dist/index.js"
+    "shb": "dist/index.js"
   },
   "scripts": {
     "build": "tsc",

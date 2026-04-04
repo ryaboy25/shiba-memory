@@ -6,15 +6,14 @@ import { recall } from "./commands/recall.js";
 import { forget } from "./commands/forget.js";
 import { linkMemories, getRelated, autoLinkAll } from "./commands/link.js";
 import { getStats, decayMemories, findDuplicates, consolidate } from "./commands/reflect.js";
-import { installHooks, uninstallHooks, hooksStatus } from "./commands/hooks.js";
 import { startDaemon, stopDaemon, daemonStatus } from "./commands/daemon.js";
 import { disconnect } from "./db.js";
 
 const program = new Command();
 
 program
-  .name("ccb")
-  .description("Claude Code Brain — PostgreSQL-backed memory for Claude Code")
+  .name("shb")
+  .description("SHB — PostgreSQL-backed persistent memory for AI agents")
   .version("0.1.0");
 
 // Helper: wrap async actions with error handling + disconnect
@@ -256,50 +255,6 @@ ingestCmd
     });
     console.log(JSON.stringify({ status: "ok", ...result }));
   }));
-
-// ─── hooks ──────────────────────────────────────────────────
-const hooksCmd = program
-  .command("hooks")
-  .description("Manage Claude Code lifecycle hooks");
-
-hooksCmd
-  .command("install")
-  .description("Install CCB hooks into Claude Code settings")
-  .action(async () => {
-    try {
-      const result = installHooks();
-      console.log(JSON.stringify({ status: "ok", ...result }));
-    } catch (e: unknown) {
-      console.error(JSON.stringify({ status: "error", message: (e as Error).message }));
-      process.exitCode = 1;
-    }
-  });
-
-hooksCmd
-  .command("uninstall")
-  .description("Remove CCB hooks from Claude Code settings")
-  .action(async () => {
-    try {
-      const result = uninstallHooks();
-      console.log(JSON.stringify({ status: "ok", ...result }));
-    } catch (e: unknown) {
-      console.error(JSON.stringify({ status: "error", message: (e as Error).message }));
-      process.exitCode = 1;
-    }
-  });
-
-hooksCmd
-  .command("status")
-  .description("Check which CCB hooks are installed")
-  .action(async () => {
-    try {
-      const result = hooksStatus();
-      console.log(JSON.stringify({ status: "ok", ...result }));
-    } catch (e: unknown) {
-      console.error(JSON.stringify({ status: "error", message: (e as Error).message }));
-      process.exitCode = 1;
-    }
-  });
 
 // ─── daemon ─────────────────────────────────────────────────
 const daemonCmd = program

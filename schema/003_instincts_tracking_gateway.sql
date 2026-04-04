@@ -1,5 +1,5 @@
 -- ==========================================================
--- CCB v0.1 -- Instincts, Progress Tracking, Gateway Events, Daily Logs
+-- SHB v0.1 -- Instincts, Progress Tracking, Gateway Events, Daily Logs
 -- ==========================================================
 
 -- Add instinct to valid memory types

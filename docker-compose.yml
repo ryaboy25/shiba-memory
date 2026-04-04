@@ -1,21 +1,43 @@
 services:
   postgres:
     image: pgvector/pgvector:pg16
-    container_name: ccb-postgres
+    container_name: shb-postgres
     environment:
-      POSTGRES_DB: ccb
-      POSTGRES_USER: ccb
-      POSTGRES_PASSWORD: ${CCB_DB_PASSWORD:-ccb_dev_password}
+      POSTGRES_DB: shb
+      POSTGRES_USER: shb
+      POSTGRES_PASSWORD: ${SHB_DB_PASSWORD:-shb_dev_password}
     ports:
-      - "${CCB_DB_PORT:-5432}:5432"
+      - "${SHB_DB_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./schema:/docker-entrypoint-initdb.d
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ccb -d ccb"]
+      test: ["CMD-SHELL", "pg_isready -U shb -d shb"]
       interval: 5s
       timeout: 5s
       retries: 5
+
+  gateway:
+    build: ./cli
+    container_name: shb-gateway
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SHB_DB_HOST: postgres
+      SHB_DB_PORT: 5432
+      SHB_DB_NAME: shb
+      SHB_DB_USER: shb
+      SHB_DB_PASSWORD: ${SHB_DB_PASSWORD:-shb_dev_password}
+      SHB_EMBEDDING_PROVIDER: ${SHB_EMBEDDING_PROVIDER:-ollama}
+      SHB_OLLAMA_URL: ${SHB_OLLAMA_URL:-http://host.docker.internal:11434}
+      SHB_OLLAMA_MODEL: ${SHB_OLLAMA_MODEL:-nomic-embed-text}
+      SHB_GATEWAY_HOST: "0.0.0.0"
+      SHB_GATEWAY_PORT: "18789"
+      SHB_API_KEY: ${SHB_API_KEY:-}
+    ports:
+      - "${SHB_GATEWAY_PORT:-18789}:18789"
+    restart: unless-stopped
 
 volumes:
   pgdata:

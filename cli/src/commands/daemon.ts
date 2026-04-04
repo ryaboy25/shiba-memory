@@ -1,7 +1,7 @@
 import { writeFileSync, readFileSync, existsSync, unlinkSync } from "fs";
 import { consolidate } from "./reflect.js";
 
-const PID_FILE = "/tmp/ccb-daemon.pid";
+const PID_FILE = "/tmp/shb-daemon.pid";
 const CONSOLIDATE_INTERVAL = 60 * 60 * 1000; // 1 hour
 
 export function startDaemon(): void {
@@ -22,7 +22,7 @@ export function startDaemon(): void {
 
   console.log(JSON.stringify({
     status: "ok",
-    message: "CCB daemon started",
+    message: "SHB daemon started",
     pid: process.pid,
     consolidate_interval_minutes: CONSOLIDATE_INTERVAL / 60000,
   }));
@@ -49,10 +49,10 @@ async function runConsolidation(): Promise<void> {
   try {
     const result = await consolidate();
     process.stderr.write(
-      `[CCB daemon] Consolidation: merged=${result.merged} contradictions=${result.contradictions} decayed=${result.decayed} expired=${result.expired} linked=${result.linked} insights=${result.insights}\n`
+      `[SHB daemon] Consolidation: merged=${result.merged} contradictions=${result.contradictions} decayed=${result.decayed} expired=${result.expired} linked=${result.linked} insights=${result.insights}\n`
     );
   } catch (err) {
-    process.stderr.write(`[CCB daemon] Consolidation error: ${(err as Error).message}\n`);
+    process.stderr.write(`[SHB daemon] Consolidation error: ${(err as Error).message}\n`);
   }
 }
 
