@@ -152,26 +152,11 @@ class ShibaMemoryProvider:
 
     def get_config_schema(self):
         """Define setup fields for `hermes memory setup`."""
-        return {
-            "type": "object",
-            "properties": {
-                "endpoint": {
-                    "type": "string",
-                    "description": "Shiba gateway URL (e.g. http://localhost:18789)",
-                    "default": "http://localhost:18789",
-                },
-                "api_key": {
-                    "type": "string",
-                    "description": "Shiba API key (leave empty if no auth)",
-                    "default": "",
-                },
-                "project": {
-                    "type": "string",
-                    "description": "Project name for scoped memories (optional)",
-                    "default": "",
-                },
-            },
-        }
+        return [
+            {"key": "endpoint", "description": "Shiba gateway URL", "default": "http://localhost:18789"},
+            {"key": "api_key", "description": "Shiba API key (leave empty if no auth)", "secret": True, "default": ""},
+            {"key": "project", "description": "Project name for scoped memories (optional)", "default": ""},
+        ]
 
     def save_config(self, values, hermes_home):
         """Persist Shiba config to disk."""

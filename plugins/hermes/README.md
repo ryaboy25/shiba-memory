@@ -5,11 +5,8 @@ Persistent memory for Hermes that learns and never forgets.
 ## Install
 
 ```bash
-# Copy plugin to Hermes plugins directory
-cp -r plugins/hermes ~/.hermes/plugins/shiba
-
-# Or symlink for development
-ln -s /path/to/shiba-memory/plugins/hermes ~/.hermes/plugins/shiba
+# Symlink the plugin into Hermes (stays in sync with git pulls)
+ln -s $(pwd)/plugins/hermes ~/.hermes/plugins/shiba
 
 # Install dependency
 pip install httpx
