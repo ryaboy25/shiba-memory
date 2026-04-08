@@ -11,7 +11,7 @@ import { getStats, decayMemories, consolidate } from "./reflect.js";
 const PORT = parseInt(process.env.SHB_GATEWAY_PORT || "18789");
 const BIND_HOST = process.env.SHB_GATEWAY_HOST || "0.0.0.0";
 const API_KEY = process.env.SHB_API_KEY || "";
-const PID_FILE = "/tmp/shb-gateway.pid";
+const PID_FILE = "/tmp/shiba-gateway.pid";
 
 function parseBody(req: IncomingMessage): Promise<Record<string, unknown>> {
   return new Promise((resolve) => {
@@ -34,10 +34,11 @@ function respond(res: ServerResponse, status: number, body: unknown) {
 
 function authenticate(req: IncomingMessage, res: ServerResponse): boolean {
   if (!API_KEY) return true; // No key configured = open access
-  const provided = req.headers["x-shb-key"] as string
+  const provided = req.headers["x-shiba-key"] as string
+    || req.headers["x-shb-key"] as string
     || req.headers["authorization"]?.replace("Bearer ", "");
   if (provided === API_KEY) return true;
-  respond(res, 401, { status: "error", message: "Unauthorized — set X-SHB-Key header" });
+  respond(res, 401, { status: "error", message: "Unauthorized — set X-Shiba-Key header" });
   return false;
 }
 
@@ -55,7 +56,7 @@ export function startGateway(): void {
     // CORS
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type, X-SHB-Key, Authorization");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, X-Shiba-Key, X-SHB-Key, Authorization");
     if (req.method === "OPTIONS") { res.writeHead(204); res.end(); return; }
 
     // GET /health — lightweight, no auth required
@@ -335,7 +336,7 @@ export function startGateway(): void {
     writeFileSync(PID_FILE, String(process.pid));
     console.log(JSON.stringify({
       status: "ok",
-      message: "SHB Gateway started",
+      message: "Shiba Gateway started",
       pid: process.pid,
       host: BIND_HOST,
       port: PORT,

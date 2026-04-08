@@ -1,6 +1,21 @@
-# SHB — Second Hermes Brain
+# Shiba Memory
 
-A PostgreSQL + pgvector persistent memory system for AI agents. SHB stores memories in a relational database with semantic search, knowledge graphs, and automatic learning — accessible via an HTTP gateway API.
+Persistent memory for AI agents that learns and never forgets. Shiba stores memories with semantic search, knowledge graphs, and automatic learning — accessible via CLI, HTTP gateway, or Claude Code hooks.
+
+**Framework-agnostic**: works with Claude Code, Hermes, LangChain, custom agents, or anything that speaks HTTP.
+
+## Why Shiba?
+
+| Feature | Shiba | Mem0 | Zep | Letta | ByteRover |
+|---------|-----|------|-----|-------|-----------|
+| Hybrid search (semantic + FTS) | **Yes** | Vector only | Graph+semantic | Agent-managed | File-based |
+| Self-improving memory (instinct→skill) | **Yes** | No | No | LLM-managed | No |
+| Knowledge graph | **Yes** | Pro ($249/mo) | Temporal KG | No | No |
+| Cross-project insights | **Yes** | No | No | No | No |
+| ACT-R cognitive decay | **Yes** | No | No | No | No |
+| Halfvec optimization (50% memory savings) | **Yes** | No | No | No | No |
+| Self-hosted & open source | **Yes** | Yes | Partial | Yes | Yes |
+| Claude Code hooks | **Native** | No | No | No | No |
 
 ## What It Does
 
@@ -9,35 +24,36 @@ A PostgreSQL + pgvector persistent memory system for AI agents. SHB stores memor
 - **Builds a knowledge graph** linking related memories automatically
 - **Gets smarter over time** with confidence-scored instincts that evolve into skills
 - **Ingests external knowledge** from web pages, RSS feeds, git repos, files, AI news
-- **Runs an always-on gateway** HTTP API for agent integration
+- **Runs an always-on gateway** HTTP API for any agent integration
+- **Integrates with Claude Code** via native hooks (session start, tool use, compaction)
 - **Tracks progress** on long-running tasks with JSON feature tracking
 - **Keeps daily logs** as transparent, inspectable working memory
 
 ## Architecture
 
 ```
-AI Agent (Hermes / etc.)
-    |
-    |-- HTTP API (port 18789)
-    |
-SHB Gateway
-    |
-    |-- POST /remember -----> Store memories with embeddings
-    |-- POST /recall -------> Hybrid semantic + full-text search
-    |-- POST /forget -------> Delete by criteria
-    |-- GET  /memory/:id ---> Get specific memory
-    |-- POST /link ---------> Knowledge graph management
-    |-- POST /reflect/* ----> Brain maintenance
-    |-- POST /event --------> Event queue
-    |-- POST /webhook ------> External integrations
-    |
-PostgreSQL 16 + pgvector
-    |-- memories (embeddings, fts, confidence, decay)
-    |-- memory_links (knowledge graph)
-    |-- conversations (episodic memory)
-    |-- events_queue (gateway events)
-    |-- ingestion_sources + log (dedup tracking)
-    |-- consolidation_log (brain maintenance)
+┌─────────────────────────────────────────────────────────────┐
+│  AI Agents                                                  │
+│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────────┐   │
+│  │ Claude   │ │ Hermes   │ │ LangChain│ │ Custom Agent │   │
+│  │ Code     │ │          │ │          │ │              │   │
+│  └────┬─────┘ └────┬─────┘ └────┬─────┘ └──────┬───────┘   │
+│       │ hooks      │ HTTP       │ HTTP          │ HTTP      │
+├───────┴────────────┴────────────┴───────────────┴───────────┤
+│  Shiba Gateway API (port 18789)                             │
+│  17 REST endpoints · Auth via X-Shiba-Key · Event queue       │
+├─────────────────────────────────────────────────────────────┤
+│  Shiba CLI (TypeScript)                                     │
+│  48+ commands · remember · recall · forget · evolve · ingest│
+├─────────────────────────────────────────────────────────────┤
+│  PostgreSQL 16 + pgvector                                   │
+│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────────┐   │
+│  │ memories │ │ memory   │ │conversa- │ │ events_queue │   │
+│  │ +vectors │ │ _links   │ │ tions    │ │              │   │
+│  │ +fts     │ │ (graph)  │ │(episodic)│ │ (webhooks)   │   │
+│  └──────────┘ └──────────┘ └──────────┘ └──────────────┘   │
+│  HNSW halfvec index · 17 SQL functions · hybrid search      │
+└─────────────────────────────────────────────────────────────┘
 ```
 
 ## Quick Start
@@ -70,11 +86,87 @@ ollama serve &
 ollama pull nomic-embed-text
 ```
 
-## Gateway API
+## Claude Code Integration
 
-The gateway is the primary integration point. Start it with `shb gateway start`.
+Shiba ships with native Claude Code hooks that provide persistent memory across sessions.
 
-Auth: Set `SHB_API_KEY` in `.env`, then pass `X-SHB-Key: <key>` header.
+### How It Works
+
+| Hook | When It Fires | What Shiba Does |
+|------|---------------|---------------|
+| **SessionStart** | New session begins | Recalls relevant project memories, user preferences, feedback, and skills → injects into context |
+| **PostToolUse** | After Edit/Write/Bash | Captures significant actions as episodic memories (7-day TTL) |
+| **Stop** | Response finishes | Updates session record, cleans up old episodes |
+| **PreCompact** | Before context compression | Snapshots current decisions and files touched before context is lost |
+| **PostCompact** | After context compression | Re-injects key project context and user feedback into compressed context |
+
+### Setup
+
+The hooks are configured in `~/.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "SessionStart": [{
+      "matcher": "",
+      "hooks": [{
+        "type": "command",
+        "command": "node \"/path/to/claude-code-brain/cli/dist/hooks/session-start.js\"",
+        "timeout": 5
+      }]
+    }],
+    "PostToolUse": [{
+      "matcher": "Edit|Write|Bash",
+      "hooks": [{
+        "type": "command",
+        "command": "node \"/path/to/claude-code-brain/cli/dist/hooks/post-tool.js\"",
+        "timeout": 5
+      }]
+    }],
+    "Stop": [{
+      "matcher": "",
+      "hooks": [{
+        "type": "command",
+        "command": "node \"/path/to/claude-code-brain/cli/dist/hooks/stop.js\"",
+        "timeout": 5
+      }]
+    }],
+    "PreCompact": [{
+      "matcher": "",
+      "hooks": [{
+        "type": "command",
+        "command": "node \"/path/to/claude-code-brain/cli/dist/hooks/pre-compact.js\"",
+        "timeout": 5
+      }]
+    }],
+    "PostCompact": [{
+      "matcher": "",
+      "hooks": [{
+        "type": "command",
+        "command": "node \"/path/to/claude-code-brain/cli/dist/hooks/post-compact.js\"",
+        "timeout": 5
+      }]
+    }]
+  }
+}
+```
+
+Replace `/path/to/claude-code-brain` with your actual install path.
+
+### What You Get
+
+- **Session continuity**: Start a new Claude Code session and Shiba automatically injects relevant context from past sessions
+- **Automatic memory**: Every significant edit, file creation, and command is captured
+- **Compaction resilience**: When Claude Code compresses your conversation, Shiba re-injects the important stuff
+- **Cross-project learning**: Patterns discovered in one project surface when relevant in another
+
+## Gateway API (Framework-Agnostic)
+
+The gateway is the primary integration point for **any** AI agent. Start it with `shiba gateway start`.
+
+Auth: Set `SHB_API_KEY` in `.env`, then pass `X-Shiba-Key: <key>` header.
+
+### Endpoints
 
 ```
 GET  /health                  # Lightweight health check (no auth)
@@ -96,21 +188,61 @@ POST /webhook                 # Generic webhook receiver
 POST /channel                 # Channel message receiver
 ```
 
-### Example: Store a memory
+### Integration Examples
 
-```bash
-curl -X POST http://localhost:18789/remember \
-  -H "Content-Type: application/json" \
-  -H "X-SHB-Key: your-key" \
-  -d '{"type": "user", "title": "My Role", "content": "Senior engineer at ACME", "importance": 0.9}'
+**Python (any agent)**:
+```python
+import httpx
+
+SHIBA = "http://localhost:18789"
+HEADERS = {"Content-Type": "application/json", "X-Shiba-Key": "your-key"}
+
+# Store a memory
+httpx.post(f"{SHIBA}/remember", headers=HEADERS, json={
+    "type": "user",
+    "title": "User Role",
+    "content": "Senior engineer at ACME, specializes in distributed systems",
+    "importance": 0.9
+})
+
+# Search memories
+resp = httpx.post(f"{SHIBA}/recall", headers=HEADERS, json={
+    "query": "what does the user specialize in",
+    "limit": 5
+})
+memories = resp.json()["memories"]
 ```
 
-### Example: Search memories
+**JavaScript/TypeScript (any agent)**:
+```typescript
+const SHIBA = "http://localhost:18789";
+const headers = { "Content-Type": "application/json", "X-Shiba-Key": "your-key" };
 
+// Store
+await fetch(`${SHIBA}/remember`, {
+  method: "POST", headers,
+  body: JSON.stringify({ type: "feedback", title: "Coding Style", content: "User prefers functional patterns" })
+});
+
+// Search
+const { memories } = await fetch(`${SHIBA}/recall`, {
+  method: "POST", headers,
+  body: JSON.stringify({ query: "coding preferences", limit: 5 })
+}).then(r => r.json());
+```
+
+**cURL**:
 ```bash
+# Store
+curl -X POST http://localhost:18789/remember \
+  -H "Content-Type: application/json" \
+  -H "X-Shiba-Key: your-key" \
+  -d '{"type": "user", "title": "My Role", "content": "Senior engineer at ACME", "importance": 0.9}'
+
+# Search
 curl -X POST http://localhost:18789/recall \
   -H "Content-Type: application/json" \
-  -H "X-SHB-Key: your-key" \
+  -H "X-Shiba-Key: your-key" \
   -d '{"query": "what does the user do", "limit": 5}'
 ```
 
@@ -119,11 +251,11 @@ curl -X POST http://localhost:18789/recall \
 ### Memory
 
 ```bash
-shb remember -t user --title "My Role" -c "Senior DB engineer at ACME"
-shb recall "what does the user do" --limit 5
-shb forget --id <uuid>
-shb forget --expired
-shb forget --low-confidence 0.1
+shiba remember -t user --title "My Role" -c "Senior DB engineer at ACME"
+shiba recall "what does the user do" --limit 5
+shiba forget --id <uuid>
+shiba forget --expired
+shiba forget --low-confidence 0.1
 ```
 
 ### Search
@@ -132,99 +264,142 @@ Hybrid search combines semantic similarity (pgvector cosine distance) with Postg
 
 ```bash
 # Basic search
-shb recall "database architecture patterns"
+shiba recall "database architecture patterns"
 
 # Scoped to a project (project memories get 1.3x boost)
-shb recall "auth system" --project /path/to/repo
+shiba recall "auth system" --project /path/to/repo
 
 # Filter by type
-shb recall "preferences" --type feedback --limit 3
+shiba recall "preferences" --type feedback --limit 3
 ```
 
 ### Knowledge Graph
 
 ```bash
-shb link create <source-id> <target-id> supports --strength 0.8
-shb link show <memory-id>
-shb link auto                    # auto-discover relationships
+shiba link create <source-id> <target-id> supports --strength 0.8
+shiba link show <memory-id>
+shiba link auto                    # auto-discover relationships
 ```
 
 ### Ingestion
 
 ```bash
-shb ingest web https://docs.example.com    # web pages
-shb ingest rss https://blog.example.com/feed  # RSS feeds
-shb ingest git /path/to/repo               # git history
-shb ingest file /path/to/notes             # files and directories
-shb ingest news                            # AI/tech news feeds
-shb ingest news --dry-run                  # preview without storing
+shiba ingest web https://docs.example.com    # web pages
+shiba ingest rss https://blog.example.com/feed  # RSS feeds
+shiba ingest git /path/to/repo               # git history
+shiba ingest file /path/to/notes             # files and directories
+shiba ingest news                            # AI/tech news feeds
+shiba ingest news --dry-run                  # preview without storing
 ```
 
 ### Brain Maintenance
 
 ```bash
-shb reflect stats                # memory statistics
-shb reflect consolidate          # merge dupes, detect contradictions, decay, auto-link
-shb reflect decay                # reduce confidence of old unused memories
-shb reflect duplicates           # find near-duplicates
-shb evolve                       # promote instincts to skills
+shiba reflect stats                # memory statistics
+shiba reflect consolidate          # merge dupes, detect contradictions, decay, auto-link
+shiba reflect decay                # reduce confidence of old unused memories
+shiba reflect duplicates           # find near-duplicates
+shiba evolve                       # promote instincts to skills
 ```
 
 ### Progress Tracking
 
 ```bash
-shb track create "my-project" --features "auth" "api" "tests"
-shb track update "my-project" "auth" --status done
-shb track show
+shiba track create "my-project" --features "auth" "api" "tests"
+shiba track update "my-project" "auth" --status done
+shiba track show
 ```
 
 ### Daily Logs
 
 ```bash
-shb log add "Implemented the gateway server"
-shb log show                     # today
-shb log show 2026-03-27          # specific date
-shb log recent --days 7
+shiba log add "Implemented the gateway server"
+shiba log show                     # today
+shiba log show 2026-03-27          # specific date
+shiba log recent --days 7
 ```
 
 ### Other
 
 ```bash
-shb gateway start        # HTTP server on port 18789
-shb gateway status
-shb gateway stop
-shb daemon start         # background consolidation (hourly)
-shb health               # verify database and extensions
-shb setup                # interactive setup wizard
+shiba gateway start        # HTTP server on port 18789
+shiba gateway status
+shiba gateway stop
+shiba daemon start         # background consolidation (hourly)
+shiba health               # verify database and extensions
+shiba setup                # interactive setup wizard
 ```
 
 ## How the Brain Works
 
-### Vector Search
+### Memory Types
 
-Every memory is converted to a 512-dimension vector by an embedding model (Ollama nomic-embed-text, running locally). Similar meanings produce nearby vectors. "What does the user do for work" finds "Senior DB engineer" even though they share no words.
+| Type | Purpose | Example |
+|------|---------|---------|
+| `user` | Identity, preferences, expertise | "Senior engineer who prefers functional patterns" |
+| `feedback` | Corrections and confirmations | "Don't mock the database in integration tests" |
+| `project` | Goals, decisions, context | "Auth rewrite driven by compliance requirements" |
+| `reference` | Pointers to external resources | "Pipeline bugs tracked in Linear project INGEST" |
+| `episode` | Session events, conversations | "Edited auth.ts, ran test suite" |
+| `skill` | Learned procedures and patterns | "Cross-project pattern: always use parameterized queries" |
+| `instinct` | Low-confidence observations | "User seems to prefer small PRs" (evolves to skill) |
 
-The HNSW index stores vectors as halfvec (16-bit) while the data stays full precision (32-bit). This cuts index memory in half with minimal accuracy loss.
-
-### Hybrid Search
+### Hybrid Search Scoring
 
 Two search arms run in parallel:
 1. **Semantic**: pgvector cosine similarity on halfvec(512)
 2. **Full-text**: PostgreSQL websearch_to_tsquery on a generated tsvector column
 
 Results are fused with configurable weights (default 70% semantic, 30% keyword), then scored with:
-- **ACT-R decay**: frequently accessed memories score higher
-- **Confidence**: Bayesian-updated score (reinforced or contradicted over time)
-- **Graph boost**: memories with more relationships score higher
-- **Project boost**: 1.3x for project-specific memories when querying from that project
+
+```
+final_score = base_score
+  x (1 + ln(access_count + 1) x 0.1)    # ACT-R cognitive decay
+  x confidence                            # Bayesian confidence score
+  x (1 + graph_strength x 0.2)           # Knowledge graph boost
+  x project_boost                         # 1.3x for same-project memories
+```
 
 ### Self-Improving Memory
 
 The brain gets smarter over time:
 1. **Instincts** are low-confidence observations captured automatically
 2. Instincts gain confidence through repeated access and reinforcement
-3. `shb evolve` promotes high-confidence instincts (>0.7, accessed 3+ times) into learned skills
-4. `shb reflect consolidate` merges duplicates, detects contradictions, and generates cross-project insights
+3. `shiba evolve` promotes high-confidence instincts (>0.7, accessed 3+ times) into learned skills
+4. `shiba reflect consolidate` merges duplicates, detects contradictions, and generates cross-project insights
+
+### Halfvec Optimization
+
+Embeddings are stored at full 32-bit precision but indexed as 16-bit halfvec. The HNSW index uses half the memory with negligible accuracy loss — verified across 512 dimensions with nomic-embed-text.
+
+## Benchmarks
+
+Shiba includes a benchmark suite for comparing against other memory systems using standard datasets.
+
+### Running Benchmarks
+
+```bash
+cd benchmarks
+pip install -e ".[bench]"      # for mem-bench framework
+# OR
+pip install -e ".[standalone]"  # for standalone runner
+
+# Run
+./run_benchmarks.sh
+
+# Or standalone
+python shb_adapter.py locomo
+```
+
+### Benchmark Datasets
+
+| Benchmark | What It Tests | Source |
+|-----------|---------------|--------|
+| **LoCoMo** (ACL 2024) | Single-hop, multi-hop, temporal, adversarial QA across multi-session conversations | [HuggingFace](https://huggingface.co/datasets/Aman279/Locomo) |
+| **LongMemEval** (ICLR 2025) | Information extraction, knowledge updates, temporal reasoning, abstention | [GitHub](https://github.com/xiaowu0162/LongMemEval) |
+| **HaluMem** | Memory hallucination: false memory resistance, update correctness | [GitHub](https://github.com/MemTensor/HaluMem) |
+
+The benchmark adapter (`benchmarks/shb_adapter.py`) implements a standard interface compatible with mem-bench, allowing direct comparison with Mem0, Zep, Letta, and others.
 
 ## Configuration
 
@@ -259,7 +434,7 @@ claude-code-brain/
     002_profiles_scoping.sql      # Project scoping, ingestion tracking
     003_instincts_tracking_gateway.sql  # Instincts, events queue
   cli/src/
-    index.ts                      # CLI entry
+    index.ts                      # CLI entry (48+ commands)
     db.ts                         # PostgreSQL connection pool
     embeddings.ts                 # Ollama / OpenAI / hashtest providers
     commands/
@@ -275,22 +450,33 @@ claude-code-brain/
       daemon.ts                   # Background service
       setup.ts                    # Interactive wizard
       ingest/                     # web, rss, git, file, news
+    hooks/
+      common.ts                   # Shared hook utilities
+      session-start.ts            # SessionStart hook
+      post-tool.ts                # PostToolUse hook
+      stop.ts                     # Stop hook
+      pre-compact.ts              # PreCompact hook
+      post-compact.ts             # PostCompact hook
     utils/
       secrets.ts                  # API key masking
       dedup.ts                    # File-backed dedup window
       hash.ts                     # SHA-256
       chunker.ts                  # Text chunking
       project.ts                  # Git root detection
+  benchmarks/
+    shb_adapter.py                # mem-bench compatible adapter
+    run_benchmarks.sh             # Benchmark runner script
+    pyproject.toml                # Python dependencies
 ```
 
 ## Inspired By
 
 Built after studying these projects:
-- [Ogham MCP](https://github.com/ogham-mcp/ogham-mcp) -- hybrid search architecture, halfvec trick, ACT-R scoring
-- [Superpowers](https://github.com/obra/superpowers) -- skills-as-markdown, session bootstrap pattern
-- [everything-claude-code](https://github.com/affaan-m/everything-claude-code) -- instinct learning system
-- [CLAWDBOT](https://github.com/HarleyCoops/CLAWDBOT) -- gateway pattern, daily logs
-- [Anthropic Harnesses](https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents) -- JSON progress tracking, context engineering
+- [Ogham MCP](https://github.com/ogham-mcp/ogham-mcp) — hybrid search architecture, halfvec trick, ACT-R scoring
+- [Superpowers](https://github.com/obra/superpowers) — skills-as-markdown, session bootstrap pattern
+- [everything-claude-code](https://github.com/affaan-m/everything-claude-code) — instinct learning system
+- [CLAWDBOT](https://github.com/HarleyCoops/CLAWDBOT) — gateway pattern, daily logs
+- [Anthropic Harnesses](https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents) — JSON progress tracking, context engineering
 
 ## License
 

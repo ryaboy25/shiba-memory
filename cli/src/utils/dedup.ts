@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync, existsSync } from "fs";
 
-const DEDUP_FILE = "/tmp/shb-dedup.json";
+const DEDUP_FILE = "/tmp/shiba-dedup.json";
 
 interface DedupEntry {
   [hash: string]: number; // timestamp

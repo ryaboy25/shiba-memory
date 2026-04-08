@@ -1,10 +1,10 @@
 {
-  "name": "shb",
+  "name": "shiba",
   "version": "0.1.0",
-  "description": "SHB — PostgreSQL-backed persistent memory for AI agents",
+  "description": "Shiba — Persistent memory for AI agents that learns and never forgets",
   "type": "module",
   "bin": {
-    "shb": "dist/index.js"
+    "shiba": "dist/index.js"
   },
   "scripts": {
     "build": "tsc",

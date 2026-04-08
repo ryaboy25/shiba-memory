@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
-echo "=== SHB — Brain Setup ==="
+echo "=== Shiba — Brain Setup ==="
 echo ""
 
 # 1. Check prerequisites
@@ -39,7 +39,7 @@ echo "Starting PostgreSQL with pgvector..."
 cd "$PROJECT_DIR"
 docker compose up -d
 echo "  Waiting for database to be healthy..."
-until docker compose exec postgres pg_isready -U shb -d shb &>/dev/null; do
+until docker compose exec postgres pg_isready -U shiba -d shiba &>/dev/null; do
   sleep 1
 done
 echo "  Database is ready."
@@ -56,21 +56,21 @@ npm run build
 echo ""
 
 # 5. Link CLI globally
-echo "Linking shb command globally..."
+echo "Linking shiba command globally..."
 npm link
 echo ""
 
 # 6. Verify
 echo "Running health check..."
-shb health
+shiba health
 echo ""
 
-echo "=== SHB Setup Complete ==="
+echo "=== Shiba Setup Complete ==="
 echo ""
 echo "Usage:"
-echo "  shb remember --type user --title 'My Role' --content 'I am a DB engineer'"
-echo "  shb recall 'what does the user do'"
-echo "  shb reflect stats"
-echo "  shb gateway start"
-echo "  shb health"
+echo "  shiba remember --type user --title 'My Role' --content 'I am a DB engineer'"
+echo "  shiba recall 'what does the user do'"
+echo "  shiba reflect stats"
+echo "  shiba gateway start"
+echo "  shiba health"
 echo ""

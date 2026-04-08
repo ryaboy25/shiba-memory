@@ -1,17 +1,18 @@
-# SHB — Persistent AI Memory Brain
+# Shiba — Persistent Memory for AI Agents
 
 PostgreSQL + pgvector backed persistent memory system for AI agents.
 
 ## Architecture
 
 - **Database**: PostgreSQL 16 + pgvector (Docker)
-- **CLI**: TypeScript (`shb` command) — memory management and maintenance
+- **CLI**: TypeScript (`shiba` command) — memory management and maintenance
 - **Gateway**: HTTP API (port 18789) — how AI agents talk to the brain
+- **Hooks**: Native Claude Code hooks for session memory
 - **Embeddings**: Ollama (local) or OpenAI for semantic search
 
 ## Gateway API
 
-The gateway is the primary integration point for AI agents. Start it with `shb gateway start`.
+The gateway is the primary integration point for AI agents. Start it with `shiba gateway start`.
 
 ```
 GET  /health                  # Lightweight health check (no auth)
@@ -38,14 +39,14 @@ Auth: Set `SHB_API_KEY` in `.env`, then pass `X-SHB-Key: <key>` header.
 ## CLI Commands
 
 ```bash
-shb remember --type <type> --title "..." --content "..."  # Store
-shb recall "query"                                         # Search
-shb forget --id <uuid>                                     # Delete
-shb reflect stats                                          # Stats
-shb reflect consolidate                                    # Maintenance
-shb link auto                                              # Auto-link
-shb gateway start                                          # Start HTTP API
-shb health                                                 # Health check
+shiba remember --type <type> --title "..." --content "..."  # Store
+shiba recall "query"                                         # Search
+shiba forget --id <uuid>                                     # Delete
+shiba reflect stats                                          # Stats
+shiba reflect consolidate                                    # Maintenance
+shiba link auto                                              # Auto-link
+shiba gateway start                                          # Start HTTP API
+shiba health                                                 # Health check
 ```
 
 ## Development

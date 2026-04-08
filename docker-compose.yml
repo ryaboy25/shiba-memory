@@ -1,7 +1,7 @@
 services:
   postgres:
     image: pgvector/pgvector:pg16
-    container_name: shb-postgres
+    container_name: shiba-postgres
     environment:
       POSTGRES_DB: shb
       POSTGRES_USER: shb
@@ -19,7 +19,7 @@ services:
 
   gateway:
     build: ./cli
-    container_name: shb-gateway
+    container_name: shiba-gateway
     depends_on:
       postgres:
         condition: service_healthy

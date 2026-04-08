@@ -12,8 +12,8 @@ import { disconnect } from "./db.js";
 const program = new Command();
 
 program
-  .name("shb")
-  .description("SHB — PostgreSQL-backed persistent memory for AI agents")
+  .name("shiba")
+  .description("Shiba — Persistent memory for AI agents that learns and never forgets")
   .version("0.1.0");
 
 // Helper: wrap async actions with error handling + disconnect

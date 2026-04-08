@@ -133,7 +133,7 @@ async function checkPrerequisites(): Promise<boolean> {
       print("  ⟳ Installing Ollama...");
       print("  Run this in your terminal: curl -fsSL https://ollama.com/install.sh | sudo sh");
       print("  Then: ollama serve & ollama pull nomic-embed-text");
-      print("  Then re-run: shb setup");
+      print("  Then re-run: shiba setup");
       allGood = false;
     } else {
       print("  You can use OpenAI embeddings instead. Set SHB_EMBEDDING_PROVIDER=openai in .env");
@@ -188,7 +188,7 @@ async function setupDatabase(): Promise<boolean> {
   let ready = false;
   for (let i = 0; i < 30; i++) {
     try {
-      execSync(`docker exec shb-postgres pg_isready -U shb -d shb 2>/dev/null`, { encoding: "utf-8" });
+      execSync(`docker exec shiba-postgres pg_isready -U shb -d shb 2>/dev/null`, { encoding: "utf-8" });
       ready = true;
       break;
     } catch {
@@ -203,7 +203,7 @@ async function setupDatabase(): Promise<boolean> {
 
   // Set SCRAM password (Docker pgvector quirk)
   try {
-    execSync(`docker exec shb-postgres psql -U shb -d shb -c "SET password_encryption = 'scram-sha-256'; ALTER USER shb WITH PASSWORD 'shb_dev_password';"`, { encoding: "utf-8" });
+    execSync(`docker exec shiba-postgres psql -U shb -d shb -c "SET password_encryption = 'scram-sha-256'; ALTER USER shb WITH PASSWORD 'shb_dev_password';"`, { encoding: "utf-8" });
   } catch { /* ignore if fails */ }
 
   // Verify connection from CLI
@@ -427,7 +427,7 @@ async function buildCli(): Promise<void> {
 
   const cliDir = resolve(PROJECT_ROOT, "cli");
 
-  print("  ⟳ Building shb CLI...");
+  print("  ⟳ Building Shiba CLI...");
   try {
     execSync(`cd "${cliDir}" && npm run build 2>&1`, { encoding: "utf-8" });
     success("CLI built successfully");
@@ -437,13 +437,13 @@ async function buildCli(): Promise<void> {
 
   // Check if globally linked
   try {
-    execSync("which shb 2>/dev/null", { encoding: "utf-8" });
-    success("shb command available globally");
+    execSync("which shiba 2>/dev/null", { encoding: "utf-8" });
+    success("shiba command available globally");
   } catch {
-    print("  ⟳ Linking shb globally...");
+    print("  ⟳ Linking shiba globally...");
     try {
       execSync(`cd "${cliDir}" && npm link 2>&1`, { encoding: "utf-8" });
-      success("shb command linked globally");
+      success("shiba command linked globally");
     } catch {
       print("  Could not link globally. Run: cd cli && sudo npm link");
     }
@@ -469,18 +469,18 @@ async function verify(): Promise<void> {
     success("Brain is ready!");
 
     print("\n  ╔══════════════════════════════════════════╗");
-    print("  ║  SHB Brain is set up!                     ║");
+    print("  ║  Shiba Brain is set up!                     ║");
     print("  ╚══════════════════════════════════════════╝");
     print("");
     print("  Quick start:");
-    print("    shb gateway start              # Start the HTTP API");
-    print("    shb recall \"what do you know about me\"");
-    print("    shb reflect stats");
-    print("    shb reflect consolidate");
+    print("    shiba gateway start              # Start the HTTP API");
+    print("    shiba recall \"what do you know about me\"");
+    print("    shiba reflect stats");
+    print("    shiba reflect consolidate");
     print("");
     print("  Your AI agent talks to the brain via the gateway API.");
     print("  Default: http://0.0.0.0:18789");
-    print("  Run 'shb setup' again anytime to update your profile.\n");
+    print("  Run 'shiba setup' again anytime to update your profile.\n");
   } catch (e) {
     fail(`Verification failed: ${(e as Error).message}`);
   }
@@ -491,7 +491,7 @@ async function verify(): Promise<void> {
 export async function runSetup(): Promise<void> {
   console.log("");
   console.log("  ╔══════════════════════════════════════════╗");
-  console.log("  ║  SHB — Brain Setup Wizard                ║");
+  console.log("  ║  Shiba — Brain Setup Wizard               ║");
   console.log("  ╚══════════════════════════════════════════╝");
   console.log("");
   console.log("  This wizard will set up your persistent AI memory brain.");
@@ -501,7 +501,7 @@ export async function runSetup(): Promise<void> {
     // Step 1: Prerequisites
     const prereqsOk = await checkPrerequisites();
     if (!prereqsOk) {
-      print("\n  Fix the prerequisites above and re-run: shb setup");
+      print("\n  Fix the prerequisites above and re-run: shiba setup");
       rl.close();
       await disconnect();
       return;
@@ -510,7 +510,7 @@ export async function runSetup(): Promise<void> {
     // Step 2: Database
     const dbOk = await setupDatabase();
     if (!dbOk) {
-      print("\n  Fix the database issue above and re-run: shb setup");
+      print("\n  Fix the database issue above and re-run: shiba setup");
       rl.close();
       await disconnect();
       return;
