@@ -40,9 +40,15 @@ def llm_chat(prompt, max_tokens=200):
     resp.raise_for_status()
     msg = resp.json()["choices"][0]["message"]
     content = msg.get("content", "")
-    # Fallback: if content is empty but reasoning has the answer (channel format)
-    if not content.strip() and "<channel|>" in msg.get("reasoning_content", ""):
-        content = msg["reasoning_content"].split("<channel|>")[-1].strip()
+    reasoning = msg.get("reasoning_content", "")
+    # Fallback chain when content is empty:
+    if not content.strip():
+        # Try channel format first
+        if "<channel|>" in reasoning:
+            content = reasoning.split("<channel|>")[-1].strip()
+        # Otherwise use the full reasoning as the answer
+        elif reasoning.strip():
+            content = reasoning.strip()
     return content.strip()
 
 
