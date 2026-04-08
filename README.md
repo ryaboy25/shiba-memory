@@ -58,32 +58,86 @@ Persistent memory for AI agents that learns and never forgets. Shiba stores memo
 
 ## Quick Start
 
-```bash
-git clone https://github.com/ryaboy25/claude-code-brain.git
-cd claude-code-brain/cli
-npm install && npm run build
-cd .. && node cli/dist/index.js setup
-```
-
-The setup wizard handles everything:
-1. Checks prerequisites (Docker, Node, Ollama)
-2. Starts PostgreSQL + pgvector
-3. Asks about you (name, role, expertise, preferences)
-4. Scans your repos
-5. Configures gateway API key
-6. Verifies the brain is ready
-
-## Prerequisites
+### Prerequisites
 
 - **Docker** (for PostgreSQL + pgvector)
 - **Node.js 18+**
 - **Ollama** with `nomic-embed-text` model (for local embeddings, free)
 
+### Install
+
 ```bash
-# Install Ollama (Linux/WSL)
+git clone https://github.com/ryaboy25/shiba-memory.git
+cd shiba-memory
+
+# Create .env from template
+cp .env.example .env
+
+# Start PostgreSQL + pgvector
+docker compose up -d postgres
+
+# Build the CLI
+cd cli && npm install && npm run build
+
+# Run the setup wizard
+node dist/index.js setup
+
+# Start the gateway
+node dist/index.js gateway start
+```
+
+### Install Ollama (if not already installed)
+
+```bash
 curl -fsSL https://ollama.com/install.sh | sh
-ollama serve &
 ollama pull nomic-embed-text
+```
+
+### Verify
+
+```bash
+curl http://localhost:18789/health
+# → {"status":"ok","uptime_seconds":5,"db_latency_ms":2}
+```
+
+## Hermes Agent Integration
+
+Shiba ships as a native Hermes memory provider plugin.
+
+### Setup
+
+```bash
+# From the shiba-memory repo root:
+mkdir -p ~/.hermes/hermes-agent/plugins/memory/shiba
+ln -s $(pwd)/plugins/hermes/* ~/.hermes/hermes-agent/plugins/memory/shiba/
+
+# Install dependency in Hermes venv
+~/.hermes/hermes-agent/venv/bin/pip install httpx
+
+# Configure
+hermes memory setup
+# → Select "shiba", enter gateway URL (default: http://localhost:18789)
+```
+
+### What Hermes Gets
+
+- **shiba_recall** / **shiba_remember** / **shiba_forget** tools available to the LLM
+- **Automatic memory**: Every conversation turn stored as an episode via `sync_turn()`
+- **Tier 1 extraction**: Pattern matching on user messages ("I prefer...", "Don't...", "Remember that...")
+- **Tier 2 extraction**: LLM-based correction detection and session summarization
+- **Prefetch**: Relevant memories injected before each turn
+- **Session summaries**: Key insights extracted when sessions end
+- **Memory mirroring**: Built-in MEMORY.md/USER.md writes mirrored to Shiba
+
+### Verify
+
+```bash
+# In Hermes, say something memorable:
+# → "Remember that I prefer PostgreSQL for all databases"
+
+# Then check the DB:
+docker exec shiba-postgres psql -U shb -d shb \
+  -c "SELECT type, title FROM memories ORDER BY created_at DESC LIMIT 5;"
 ```
 
 ## Claude Code Integration
@@ -111,7 +165,7 @@ The hooks are configured in `~/.claude/settings.json`:
       "matcher": "",
       "hooks": [{
         "type": "command",
-        "command": "node \"/path/to/claude-code-brain/cli/dist/hooks/session-start.js\"",
+        "command": "node \"/path/to/shiba-memory/cli/dist/hooks/session-start.js\"",
         "timeout": 5
       }]
     }],
@@ -119,7 +173,7 @@ The hooks are configured in `~/.claude/settings.json`:
       "matcher": "Edit|Write|Bash",
       "hooks": [{
         "type": "command",
-        "command": "node \"/path/to/claude-code-brain/cli/dist/hooks/post-tool.js\"",
+        "command": "node \"/path/to/shiba-memory/cli/dist/hooks/post-tool.js\"",
         "timeout": 5
       }]
     }],
@@ -127,7 +181,7 @@ The hooks are configured in `~/.claude/settings.json`:
       "matcher": "",
       "hooks": [{
         "type": "command",
-        "command": "node \"/path/to/claude-code-brain/cli/dist/hooks/stop.js\"",
+        "command": "node \"/path/to/shiba-memory/cli/dist/hooks/stop.js\"",
         "timeout": 5
       }]
     }],
@@ -135,7 +189,7 @@ The hooks are configured in `~/.claude/settings.json`:
       "matcher": "",
       "hooks": [{
         "type": "command",
-        "command": "node \"/path/to/claude-code-brain/cli/dist/hooks/pre-compact.js\"",
+        "command": "node \"/path/to/shiba-memory/cli/dist/hooks/pre-compact.js\"",
         "timeout": 5
       }]
     }],
@@ -143,7 +197,7 @@ The hooks are configured in `~/.claude/settings.json`:
       "matcher": "",
       "hooks": [{
         "type": "command",
-        "command": "node \"/path/to/claude-code-brain/cli/dist/hooks/post-compact.js\"",
+        "command": "node \"/path/to/shiba-memory/cli/dist/hooks/post-compact.js\"",
         "timeout": 5
       }]
     }]
@@ -151,7 +205,7 @@ The hooks are configured in `~/.claude/settings.json`:
 }
 ```
 
-Replace `/path/to/claude-code-brain` with your actual install path.
+Replace `/path/to/shiba-memory` with your actual install path.
 
 ### What You Get
 

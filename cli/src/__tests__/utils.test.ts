@@ -81,8 +81,8 @@ describe("chunker", () => {
 
 describe("project", () => {
   it("detects project name from git repo path", () => {
-    const name = detectProject("/mnt/c/Users/Ryabo/source/repos/claude-code-brain");
-    expect(name).toBe("claude-code-brain");
+    const name = detectProject("/mnt/c/Users/Ryabo/source/repos/shiba-memory");
+    expect(name).toBe("shiba-memory");
   });
 
   it("falls back to basename for non-git directory", () => {
