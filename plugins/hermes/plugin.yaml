@@ -1,0 +1,7 @@
+name: shiba
+version: "0.1.0"
+description: "Shiba Memory — Persistent memory for AI agents with hybrid search, knowledge graphs, and self-improving instincts"
+author: "Ilya Ryaboy"
+hooks:
+  - memory_provider
+tools: []

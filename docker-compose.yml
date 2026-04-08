@@ -7,7 +7,7 @@ services:
       POSTGRES_USER: shb
       POSTGRES_PASSWORD: ${SHB_DB_PASSWORD:-shb_dev_password}
     ports:
-      - "${SHB_DB_PORT:-5432}:5432"
+      - "5499:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./schema:/docker-entrypoint-initdb.d
