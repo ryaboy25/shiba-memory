@@ -21,7 +21,7 @@ import {
   remember,
   detectProject,
   detectProjectPath,
-  query,
+  queryDB,
 } from "./common.js";
 
 interface ToolEvent {
@@ -106,7 +106,7 @@ safeRun(async () => {
   const sessionId = event.session_id || env.sessionId;
   const filePath = event.tool_input?.file_path;
   if (filePath) {
-    await query(
+    await queryDB(
       `UPDATE conversations
        SET files_touched = array_append(
          COALESCE(files_touched, '{}'),

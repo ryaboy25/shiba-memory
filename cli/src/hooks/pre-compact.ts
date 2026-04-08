@@ -19,7 +19,7 @@ import {
   getHookEnv,
   parseStdinJson,
   remember,
-  query,
+  queryDB,
   detectProject,
   detectProjectPath,
 } from "./common.js";
@@ -38,7 +38,7 @@ safeRun(async () => {
   const sessionId = event?.session_id || env.sessionId;
 
   // Fetch current conversation state
-  const conv = await query<{
+  const conv = await queryDB<{
     summary: string | null;
     decisions: string[] | null;
     files_touched: string[] | null;
@@ -56,7 +56,7 @@ safeRun(async () => {
   // If we have accumulated decisions, store them as a session snapshot
   if (decisions && decisions.length > 0) {
     const decisionText = decisions
-      .map((d) => {
+      .map((d: string) => {
         try {
           const parsed = JSON.parse(d);
           return JSON.stringify(parsed);

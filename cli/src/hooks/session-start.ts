@@ -13,7 +13,7 @@ import {
   recall,
   detectProject,
   detectProjectPath,
-  query,
+  queryDB,
 } from "./common.js";
 
 safeRun(async () => {
@@ -53,7 +53,7 @@ safeRun(async () => {
   });
 
   // 4. Log the session start
-  await query(
+  await queryDB(
     `INSERT INTO conversations (session_id, summary, project_path)
      VALUES ($1, $2, $3)
      ON CONFLICT (session_id) DO UPDATE SET summary = conversations.summary`,

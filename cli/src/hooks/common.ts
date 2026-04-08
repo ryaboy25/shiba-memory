@@ -5,8 +5,9 @@
  *  - Environment variables: CLAUDE_SESSION_ID, CLAUDE_PROJECT_DIR, CLAUDE_MODEL, etc.
  *  - stdin (JSON): varies by hook type
  *
- * Hooks must exit quickly (timeout is 5s by default) so we avoid heavy operations
- * and use skipTouch on recalls to reduce DB round-trips.
+ * Hooks prefer the gateway API (single HTTP request) over direct DB access
+ * (which spawns a pool per invocation). Falls back to direct DB if gateway
+ * is unreachable.
  */
 
 import { fileURLToPath } from "url";
@@ -16,11 +17,110 @@ import dotenv from "dotenv";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: resolve(__dirname, "../../../.env") });
 
-export { query, disconnect } from "../db.js";
-export { embed, pgVector } from "../embeddings.js";
-export { recall } from "../commands/recall.js";
-export { remember } from "../commands/remember.js";
 export { detectProject, detectProjectPath } from "../utils/project.js";
+
+const GATEWAY_URL = `http://${process.env.SHB_GATEWAY_HOST || "localhost"}:${process.env.SHB_GATEWAY_PORT || "18789"}`;
+const API_KEY = process.env.SHB_API_KEY || "";
+
+// ── Gateway API client ──────────────────────────────────────
+
+let gatewayAvailable: boolean | null = null;
+
+async function gatewayFetch(path: string, body?: unknown): Promise<unknown> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (API_KEY) headers["X-Shiba-Key"] = API_KEY;
+
+  const res = await fetch(`${GATEWAY_URL}${path}`, {
+    method: body ? "POST" : "GET",
+    headers,
+    body: body ? JSON.stringify(body) : undefined,
+    signal: AbortSignal.timeout(4000), // 4s timeout (hook limit is 5s)
+  });
+
+  if (!res.ok) throw new Error(`Gateway ${path}: ${res.status}`);
+  return res.json();
+}
+
+async function isGatewayUp(): Promise<boolean> {
+  if (gatewayAvailable !== null) return gatewayAvailable;
+  try {
+    await fetch(`${GATEWAY_URL}/health`, { signal: AbortSignal.timeout(1000) });
+    gatewayAvailable = true;
+  } catch {
+    gatewayAvailable = false;
+  }
+  return gatewayAvailable;
+}
+
+// ── Public API (gateway-first, DB fallback) ─────────────────
+
+export interface RecallResult {
+  id: string;
+  type: string;
+  title: string;
+  content: string;
+  relevance: number;
+  tags: string[];
+}
+
+export async function recall(opts: {
+  query: string;
+  type?: string;
+  limit?: number;
+  project?: string;
+  skipTouch?: boolean;
+}): Promise<RecallResult[]> {
+  if (await isGatewayUp()) {
+    const result = await gatewayFetch("/recall", {
+      query: opts.query,
+      type: opts.type,
+      limit: opts.limit || 5,
+      project: opts.project,
+    }) as { memories: RecallResult[] };
+    return result.memories || [];
+  }
+  // Fallback to direct DB
+  const { recall: dbRecall } = await import("../commands/recall.js");
+  return dbRecall(opts);
+}
+
+export async function remember(opts: {
+  type: string;
+  title: string;
+  content: string;
+  tags?: string[];
+  importance?: number;
+  source?: string;
+  expiresIn?: string;
+  profile?: string;
+  projectPath?: string;
+}): Promise<string> {
+  if (await isGatewayUp()) {
+    const result = await gatewayFetch("/remember", {
+      type: opts.type,
+      title: opts.title,
+      content: opts.content,
+      tags: opts.tags,
+      importance: opts.importance,
+      source: opts.source,
+      expires_in: opts.expiresIn,
+      profile: opts.profile,
+      project_path: opts.projectPath,
+    }) as { id: string };
+    return result.id || "stored";
+  }
+  // Fallback to direct DB
+  const { remember: dbRemember } = await import("../commands/remember.js");
+  return dbRemember(opts);
+}
+
+export async function queryDB<T extends Record<string, unknown> = Record<string, unknown>>(text: string, params?: unknown[]) {
+  // Raw queries always use direct DB (gateway doesn't expose raw SQL)
+  const { query } = await import("../db.js");
+  return query<T & import("pg").QueryResultRow>(text, params);
+}
+
+// ── Hook environment ────────────────────────────────────────
 
 export function getHookEnv() {
   return {
@@ -36,9 +136,8 @@ export async function readStdin(): Promise<string> {
     process.stdin.setEncoding("utf-8");
     process.stdin.on("data", (chunk) => (data += chunk));
     process.stdin.on("end", () => resolve(data));
-    // If stdin is a TTY or nothing is piped, resolve immediately
     if (process.stdin.isTTY) resolve("");
-    setTimeout(() => resolve(data), 500); // safety timeout
+    setTimeout(() => resolve(data), 500);
   });
 }
 
@@ -57,10 +156,14 @@ export async function safeRun(fn: () => Promise<void>): Promise<void> {
   try {
     await fn();
   } catch (e) {
-    // Non-blocking: log to stderr but exit 0 so Claude Code isn't disrupted
     console.error(`[shiba-hook] ${(e as Error).message}`);
   } finally {
-    const { disconnect: dc } = await import("../db.js");
-    await dc();
+    // Only disconnect if we used direct DB (gateway mode doesn't need it)
+    if (!gatewayAvailable) {
+      try {
+        const { disconnect } = await import("../db.js");
+        await disconnect();
+      } catch { /* ignore */ }
+    }
   }
 }

@@ -20,7 +20,7 @@ import {
   safeRun,
   getHookEnv,
   parseStdinJson,
-  query,
+  queryDB,
   detectProject,
   detectProjectPath,
 } from "./common.js";
@@ -41,7 +41,7 @@ safeRun(async () => {
   const sessionId = event?.session_id || env.sessionId;
 
   // Update conversation record with token usage
-  await query(
+  await queryDB(
     `UPDATE conversations
      SET summary = COALESCE(summary, '') || $1,
          decisions = array_append(
@@ -64,7 +64,7 @@ safeRun(async () => {
   );
 
   // Clean up old session episodes (keep last 50 per project)
-  await query(
+  await queryDB(
     `DELETE FROM memories
      WHERE id IN (
        SELECT id FROM memories
