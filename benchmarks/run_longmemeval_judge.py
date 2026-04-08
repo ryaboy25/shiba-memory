@@ -26,7 +26,8 @@ LLAMA_TIMEOUT = 60
 
 
 def llm_chat(prompt, max_tokens=200):
-    """Call llama.cpp OpenAI-compatible chat endpoint."""
+    """Call llama.cpp OpenAI-compatible chat endpoint.
+    Returns only the content field (actual answer), ignoring reasoning_content."""
     resp = httpx.post(
         f"{LLAMA_ENDPOINT}/v1/chat/completions",
         json={
@@ -37,20 +38,16 @@ def llm_chat(prompt, max_tokens=200):
         timeout=LLAMA_TIMEOUT,
     )
     resp.raise_for_status()
-    data = resp.json()
-    content = data["choices"][0]["message"].get("content", "")
-    # Gemma 4 outputs thinking in <|channel>thought...<channel|>ANSWER format
-    # Extract the actual answer after the channel delimiter
-    if "<channel|>" in content:
-        content = content.split("<channel|>")[-1].strip()
-    elif "<|channel>" in content:
-        # If only opening tag, take everything (still thinking, not enough tokens)
-        content = content.split("<|channel>")[-1].strip()
-    return content
+    msg = resp.json()["choices"][0]["message"]
+    content = msg.get("content", "")
+    # Fallback: if content is empty but reasoning has the answer (channel format)
+    if not content.strip() and "<channel|>" in msg.get("reasoning_content", ""):
+        content = msg["reasoning_content"].split("<channel|>")[-1].strip()
+    return content.strip()
 
 
 def llm_chat_raw(prompt, max_tokens=200):
-    """Like llm_chat but returns FULL response including reasoning for judge parsing."""
+    """Returns BOTH reasoning_content + content for judge analysis."""
     resp = httpx.post(
         f"{LLAMA_ENDPOINT}/v1/chat/completions",
         json={
@@ -61,15 +58,10 @@ def llm_chat_raw(prompt, max_tokens=200):
         timeout=LLAMA_TIMEOUT,
     )
     resp.raise_for_status()
-    data = resp.json()
-    # Return both reasoning and content for judge analysis
-    msg = data["choices"][0]["message"]
-    full = ""
-    if msg.get("reasoning_content"):
-        full += msg["reasoning_content"]
-    if msg.get("content"):
-        full += " " + msg["content"]
-    return full.strip()
+    msg = resp.json()["choices"][0]["message"]
+    reasoning = msg.get("reasoning_content", "")
+    content = msg.get("content", "")
+    return f"{reasoning} {content}".strip()
 
 
 def generate_answer(question, context_chunks):
