@@ -3,15 +3,9 @@
  * Claude Code Hook: PostToolUse
  *
  * Fires after Edit, Write, or Bash tool calls.
- * Captures significant actions as episodic memories for session context.
- *
- * stdin JSON schema (from Claude Code):
- * {
- *   "session_id": "...",
- *   "tool_name": "Edit" | "Write" | "Bash",
- *   "tool_input": { ... },
- *   "tool_output": "..."
- * }
+ * - Tier 1: Captures tool events as episodic memories
+ * - Tier 1: Pattern-matches user messages for facts
+ * - Tier 2: Detects corrections and extracts what changed (if LLM available)
  */
 
 import {
@@ -35,6 +29,9 @@ interface ToolEvent {
     new_string?: string;
   };
   tool_output?: string;
+  // Extended: user message context (if available from Claude Code)
+  user_message?: string;
+  assistant_message?: string;
 }
 
 safeRun(async () => {
@@ -45,7 +42,50 @@ safeRun(async () => {
   const projectName = detectProject(env.projectDir);
   const projectPath = detectProjectPath(env.projectDir);
 
-  // Build a concise summary of what happened
+  // ── Tier 1: Pattern extraction from user message ──────────
+  if (event.user_message) {
+    try {
+      const { extractPatterns, isCorrection } = await import("../extraction/patterns.js");
+      const facts = extractPatterns(event.user_message, "user");
+
+      for (const fact of facts) {
+        await remember({
+          type: fact.type,
+          title: fact.title,
+          content: fact.content,
+          tags: [...fact.tags, projectName],
+          importance: fact.confidence,
+          source: "hook",
+          profile: fact.type === "project" ? "project" : "global",
+          projectPath: fact.type === "project" ? projectPath : undefined,
+        });
+      }
+
+      // ── Tier 2: Correction extraction (if LLM available) ─────
+      if (isCorrection(event.user_message) && event.assistant_message) {
+        try {
+          const { extractCorrection } = await import("../extraction/targeted.js");
+          const result = await extractCorrection(event.user_message, event.assistant_message);
+          for (const fact of result.facts) {
+            await remember({
+              type: fact.type,
+              title: fact.title,
+              content: fact.content,
+              tags: [...fact.tags, projectName],
+              importance: fact.confidence,
+              source: "hook",
+            });
+          }
+        } catch {
+          // Tier 2 is optional — LLM may not be configured
+        }
+      }
+    } catch {
+      // Pattern extraction failure is non-critical
+    }
+  }
+
+  // ── Tier 1: Tool event capture ────────────────────────────
   let title = "";
   let content = "";
   const tags = ["session-event", `tool-${event.tool_name.toLowerCase()}`];
@@ -75,13 +115,11 @@ safeRun(async () => {
     }
     case "Bash": {
       const cmd = event.tool_input?.command || "";
-      // Skip noisy commands
       if (/^(ls|cat|echo|pwd|cd)(\s|$)/.test(cmd)) return;
       title = `Ran command`;
       content = `Command: ${cmd.slice(0, 200)}`;
       if (event.tool_output) {
-        const output = event.tool_output.slice(0, 200);
-        content += `\nOutput: ${output}`;
+        content += `\nOutput: ${event.tool_output.slice(0, 200)}`;
       }
       break;
     }
@@ -89,7 +127,6 @@ safeRun(async () => {
       return;
   }
 
-  // Store as a short-lived episode (expires in 7 days)
   await remember({
     type: "episode",
     title,

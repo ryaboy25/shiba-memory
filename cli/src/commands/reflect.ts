@@ -1,4 +1,5 @@
 import { query, withTransaction } from "../db.js";
+import { isLLMAvailable } from "../llm.js";
 import type pg from "pg";
 
 export interface MemoryStats {
@@ -129,11 +130,32 @@ export async function consolidate(): Promise<ConsolidationResult> {
     }
 
     // Pass 2: Detect contradictions
-    const contradictions = await txQuery<{
-      id1: string; title1: string; id2: string; title2: string; similarity: number;
-    }>(`SELECT * FROM find_contradictions($1::float)`, [0.3]);
+    // First: find candidates via embedding distance (fast, may have false positives)
+    const candidates = await txQuery<{
+      id1: string; title1: string; content1: string;
+      id2: string; title2: string; content2: string;
+      similarity: number;
+    }>(`SELECT c.*, m1.content AS content1, m2.content AS content2
+        FROM find_contradictions($1::float) c
+        JOIN memories m1 ON m1.id = c.id1
+        JOIN memories m2 ON m2.id = c.id2`, [0.3]);
 
-    for (const c of contradictions.rows) {
+    for (const c of candidates.rows) {
+      let isContradiction = true;
+
+      // Tier 3: If LLM available, verify via NLI (embedding distance alone is unreliable)
+      if (isLLMAvailable()) {
+        try {
+          const { checkContradiction } = await import("../extraction/targeted.js");
+          const nli = await checkContradiction(c.content1, c.content2);
+          isContradiction = nli.contradicts;
+        } catch {
+          // LLM failure — fall back to embedding-based detection
+        }
+      }
+
+      if (!isContradiction) continue;
+
       await txQuery(
         `INSERT INTO memory_links (source_id, target_id, relation, strength)
          VALUES ($1::uuid, $2::uuid, 'contradicts'::relation_type, $3::float)
@@ -143,7 +165,7 @@ export async function consolidate(): Promise<ConsolidationResult> {
 
       await txQuery(
         `INSERT INTO consolidation_log (action, details) VALUES ('contradiction', $1)`,
-        [JSON.stringify({ id1: c.id1, title1: c.title1, id2: c.id2, title2: c.title2 })]
+        [JSON.stringify({ id1: c.id1, title1: c.title1, id2: c.id2, title2: c.title2, llm_verified: isLLMAvailable() })]
       );
 
       result.contradictions++;

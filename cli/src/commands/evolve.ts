@@ -1,14 +1,38 @@
 import { query } from "../db.js";
 import { embed, pgVector } from "../embeddings.js";
+import { isLLMAvailable, llmChat } from "../llm.js";
 
 export interface EvolveResult {
   promoted: number;
   clustered: number;
   instincts_checked: number;
+  llm_verified: number;
+}
+
+/**
+ * Tier 3: Use LLM to verify whether an instinct is a real pattern worth promoting.
+ * Returns true if the LLM confirms it's a real pattern.
+ */
+async function verifyInstinct(title: string, content: string, accessCount: number): Promise<boolean> {
+  if (!isLLMAvailable()) return true; // Without LLM, trust the numbers
+
+  const response = await llmChat([
+    {
+      role: "system",
+      content: `You evaluate whether an observed pattern is worth promoting to a permanent skill. Reply with JSON: {"promote": true/false, "reason": "why"}`,
+    },
+    {
+      role: "user",
+      content: `Pattern: "${title}"\nDetails: ${content.slice(0, 300)}\nObserved ${accessCount} times.\n\nIs this a real, actionable pattern worth remembering permanently?`,
+    },
+  ], 150);
+
+  if (!response) return true; // LLM failure → trust the numbers
+  return !response.toLowerCase().includes('"promote": false') && !response.toLowerCase().includes('"promote":false');
 }
 
 export async function evolve(): Promise<EvolveResult> {
-  const result: EvolveResult = { promoted: 0, clustered: 0, instincts_checked: 0 };
+  const result: EvolveResult = { promoted: 0, clustered: 0, instincts_checked: 0, llm_verified: 0 };
 
   // Find instincts ready to evolve (high confidence + frequently accessed)
   const evolved = await query<{
@@ -23,6 +47,11 @@ export async function evolve(): Promise<EvolveResult> {
   result.instincts_checked = evolved.rows.length;
 
   for (const instinct of evolved.rows) {
+    // Tier 3: LLM verification before promotion
+    const verified = await verifyInstinct(instinct.title, instinct.content, instinct.access_count);
+    if (verified) result.llm_verified++;
+    if (!verified) continue; // LLM says not a real pattern — skip
+
     // Find similar instincts to cluster with
     const cluster = await query<{
       id: string;
@@ -46,7 +75,6 @@ export async function evolve(): Promise<EvolveResult> {
       ...instinct.tags.filter((t) => t !== "instinct"),
     ];
 
-    // Create the skill memory
     const vec = await embed(`${mergedTitle} ${clusterContent}`);
 
     await query(
@@ -55,13 +83,12 @@ export async function evolve(): Promise<EvolveResult> {
       [mergedTitle, clusterContent, pgVector(vec), mergedTags, instinct.confidence]
     );
 
-    // Mark original instinct and cluster members as superseded
+    // Delete original instinct and cluster members
     const allIds = [instinct.id, ...cluster.rows.map((c) => c.id)];
     for (const id of allIds) {
       await query(`DELETE FROM memories WHERE id = $1::uuid AND type = 'instinct'`, [id]);
     }
 
-    // Log the evolution
     await query(
       `INSERT INTO consolidation_log (action, details) VALUES ('evolved', $1::jsonb)`,
       [JSON.stringify({
@@ -69,6 +96,7 @@ export async function evolve(): Promise<EvolveResult> {
         cluster_size: cluster.rows.length + 1,
         new_skill_title: mergedTitle,
         confidence: instinct.confidence,
+        llm_verified: verified,
       })]
     );
 
