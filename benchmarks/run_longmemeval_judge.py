@@ -25,48 +25,52 @@ LLAMA_ENDPOINT = "http://localhost:8080"
 LLAMA_TIMEOUT = 60
 
 
-def llm_generate(prompt, max_tokens=256):
-    """Call llama.cpp server for text generation."""
+def llm_chat(prompt, max_tokens=200):
+    """Call llama.cpp OpenAI-compatible chat endpoint."""
     resp = httpx.post(
-        f"{LLAMA_ENDPOINT}/completion",
+        f"{LLAMA_ENDPOINT}/v1/chat/completions",
         json={
-            "prompt": prompt,
-            "n_predict": max_tokens,
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": max_tokens,
             "temperature": 0.1,
-            "stop": ["\n\n", "###"],
         },
         timeout=LLAMA_TIMEOUT,
     )
     resp.raise_for_status()
-    return resp.json().get("content", "").strip()
+    data = resp.json()
+    content = data["choices"][0]["message"].get("content", "")
+    # Gemma 4 outputs thinking in <|channel>thought...<channel|>ANSWER format
+    # Extract the actual answer after the channel delimiter
+    if "<channel|>" in content:
+        content = content.split("<channel|>")[-1].strip()
+    elif "<|channel>" in content:
+        # If only opening tag, take everything (still thinking, not enough tokens)
+        content = content.split("<|channel>")[-1].strip()
+    return content
 
 
 def generate_answer(question, context_chunks):
     """Use LLM to answer a question given recalled context."""
     context = "\n\n".join(context_chunks[:5])
-    prompt = f"""Based on the following conversation history, answer the question concisely.
+    prompt = f"""Based on the following conversation history, answer the question concisely in 1-2 sentences.
 
 Context:
 {context}
 
-Question: {question}
-
-Answer:"""
-    return llm_generate(prompt, max_tokens=200)
+Question: {question}"""
+    return llm_chat(prompt, max_tokens=300)
 
 
 def judge_answer(question, expected, generated):
     """Use LLM to judge if the generated answer matches the expected answer."""
-    prompt = f"""You are an evaluation judge. Determine if the Generated Answer correctly answers the Question, compared to the Expected Answer.
+    prompt = f"""You are an evaluation judge. Determine if the Generated Answer correctly answers the Question, compared to the Expected Answer. Reply with ONLY "correct" or "incorrect".
 
 Question: {question}
-
 Expected Answer: {expected}
-
 Generated Answer: {generated}
 
-Does the generated answer convey the same information as the expected answer? Reply with ONLY "correct" or "incorrect"."""
-    result = llm_generate(prompt, max_tokens=10)
+Verdict:"""
+    result = llm_chat(prompt, max_tokens=200)
     return "correct" in result.lower()
 
 
@@ -80,7 +84,7 @@ def run():
     # Test LLM connection first
     print("Testing llama.cpp connection...")
     try:
-        test = llm_generate("Say hello in one word:", max_tokens=10)
+        test = llm_chat("Say hello in one word.", max_tokens=50)
         print(f"  LLM responded: {test}")
     except Exception as e:
         print(f"  ERROR: Cannot connect to llama.cpp at {LLAMA_ENDPOINT}: {e}")
