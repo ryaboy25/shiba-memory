@@ -60,6 +60,14 @@ safeRun(async () => {
     [env.sessionId, `Session started for ${projectName}`, projectPath]
   );
 
+  // Materialize .shiba/ files for the project
+  try {
+    const { materialize } = await import("../commands/materialize.js");
+    await materialize({ projectPath, outputDir: env.projectDir });
+  } catch {
+    // Materialization is best-effort — don't fail the hook
+  }
+
   // Build context block for Claude Code
   const allMemories = [
     ...projectMemories,

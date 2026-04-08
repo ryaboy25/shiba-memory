@@ -455,4 +455,24 @@ program
     }));
   }));
 
+// ─── materialize ───────────────────────────────────────────
+program
+  .command("materialize")
+  .description("Generate .shiba/ files from database memories for the current project")
+  .option("--project <path>", "Project path to scope memories to")
+  .option("--output <dir>", "Output directory (default: cwd)")
+  .action(action(async (opts: Record<string, unknown>) => {
+    const { materialize } = await import("./commands/materialize.js");
+    const result = await materialize({
+      projectPath: opts.project as string | undefined,
+      outputDir: opts.output as string | undefined,
+    });
+    console.log(JSON.stringify({
+      status: "ok",
+      dir: result.dir,
+      files: result.files,
+      total_memories: result.totalMemories,
+    }));
+  }));
+
 program.parse();
