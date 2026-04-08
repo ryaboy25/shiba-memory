@@ -3,3 +3,5 @@ dist/
 .env
 *.js.map
 __pycache__/
+.claude/
+.shiba/

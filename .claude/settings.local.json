@@ -1,7 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(find /mnt/c/Users/Ryabo/source/repos/claude-code-brain -type f \\\\\\(-name *.md -o -name *.json -o -name *.ts -o -name *.js -o -name *.sql -o -name *.sh -o -name *.yml -o -name .env* -o -name *.txt -o -name .gitignore \\\\\\))"
-    ]
-  }
-}
