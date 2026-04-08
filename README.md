@@ -10,9 +10,9 @@ Persistent memory for AI agents that learns and never forgets. Shiba stores memo
 |---------|-----|------|-----|-------|-----------|
 | Hybrid search (semantic + FTS) | **Yes** | Vector only | Graph+semantic | Agent-managed | File-based |
 | Self-improving memory (instinct→skill) | **Yes** | No | No | LLM-managed | No |
-| Knowledge graph | **Yes** | Pro ($249/mo) | Temporal KG | No | No |
+| Memory relationships (adjacency list) | **Yes** | Pro ($249/mo) | Temporal KG | No | No |
 | Cross-project insights | **Yes** | No | No | No | No |
-| ACT-R cognitive decay | **Yes** | No | No | No | No |
+| ACT-R-inspired scoring (fast + proper modes) | **Yes** | No | No | No | No |
 | Halfvec optimization (50% memory savings) | **Yes** | No | No | No | No |
 | Self-hosted & open source | **Yes** | Yes | Partial | Yes | Yes |
 | Claude Code hooks | **Native** | No | No | No | No |
@@ -21,7 +21,7 @@ Persistent memory for AI agents that learns and never forgets. Shiba stores memo
 
 - **Remembers everything** across all sessions, all projects, all repos
 - **Searches by meaning** not just keywords (hybrid semantic + full-text search)
-- **Builds a knowledge graph** linking related memories automatically
+- **Links related memories** via a relationship adjacency list (6 relation types)
 - **Gets smarter over time** with confidence-scored instincts that evolve into skills
 - **Ingests external knowledge** from web pages, RSS feeds, git repos, files, AI news
 - **Runs an always-on gateway** HTTP API for any agent integration

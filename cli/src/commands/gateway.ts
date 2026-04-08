@@ -468,6 +468,55 @@ function createApp() {
     return c.text(lines.join("\n") + "\n", 200, { "Content-Type": "text/plain; version=0.0.4" });
   });
 
+  // ── OpenAPI Spec ────────────────────────────────────────
+  app.get("/openapi.json", (c) => {
+    return c.json({
+      openapi: "3.1.0",
+      info: {
+        title: "Shiba Memory API",
+        version: "0.2.0",
+        description: "Persistent memory for AI agents with hybrid search, knowledge graphs, and self-improving memory.",
+      },
+      paths: {
+        "/health": { get: { summary: "Health check (no auth)", tags: ["System"], responses: { "200": { description: "OK" } } } },
+        "/status": { get: { summary: "Brain statistics", tags: ["System"], responses: { "200": { description: "OK" } } } },
+        "/remember": { post: { summary: "Store a memory", tags: ["Memory"], requestBody: { content: { "application/json": { schema: { $ref: "#/components/schemas/Remember" } } } }, responses: { "200": { description: "Memory stored" } } } },
+        "/recall": { post: { summary: "Hybrid semantic + full-text search", tags: ["Memory"], requestBody: { content: { "application/json": { schema: { $ref: "#/components/schemas/Recall" } } } }, responses: { "200": { description: "Search results" } } } },
+        "/forget": { post: { summary: "Delete memories by criteria", tags: ["Memory"], requestBody: { content: { "application/json": { schema: { $ref: "#/components/schemas/Forget" } } } }, responses: { "200": { description: "Deleted count" } } } },
+        "/memory/{id}": {
+          get: { summary: "Get memory by ID", tags: ["Memory"], parameters: [{ name: "id", in: "path", required: true, schema: { type: "string", format: "uuid" } }], responses: { "200": { description: "Memory" }, "404": { description: "Not found" } } },
+          delete: { summary: "Delete memory by ID", tags: ["Memory"], parameters: [{ name: "id", in: "path", required: true, schema: { type: "string", format: "uuid" } }], responses: { "200": { description: "Deleted" } } },
+        },
+        "/link": { post: { summary: "Create relationship between memories", tags: ["Graph"], requestBody: { content: { "application/json": { schema: { $ref: "#/components/schemas/Link" } } } }, responses: { "200": { description: "OK" } } } },
+        "/links/{id}": { get: { summary: "Get relationships for a memory", tags: ["Graph"], parameters: [{ name: "id", in: "path", required: true, schema: { type: "string", format: "uuid" } }], responses: { "200": { description: "Links" } } } },
+        "/link/auto": { post: { summary: "Auto-link all memories by similarity", tags: ["Graph"], responses: { "200": { description: "Links created count" } } } },
+        "/reflect/consolidate": { post: { summary: "Full brain maintenance", tags: ["Maintenance"], responses: { "200": { description: "Consolidation results" } } } },
+        "/reflect/decay": { post: { summary: "Decay old unused memories", tags: ["Maintenance"], responses: { "200": { description: "Decay results" } } } },
+        "/event": { post: { summary: "Queue an event", tags: ["Events"], requestBody: { content: { "application/json": { schema: { $ref: "#/components/schemas/Event" } } } }, responses: { "200": { description: "Queued" } } } },
+        "/events": { get: { summary: "Get pending events", tags: ["Events"], responses: { "200": { description: "Event list" } } } },
+        "/events/process": { post: { summary: "Mark events as processed", tags: ["Events"], requestBody: { content: { "application/json": { schema: { $ref: "#/components/schemas/ProcessEvents" } } } }, responses: { "200": { description: "Processed" } } } },
+        "/webhook": { post: { summary: "Generic webhook receiver", tags: ["Integration"], responses: { "200": { description: "Queued" } } } },
+        "/channel": { post: { summary: "Channel message receiver", tags: ["Integration"], requestBody: { content: { "application/json": { schema: { $ref: "#/components/schemas/Channel" } } } }, responses: { "200": { description: "Queued" } } } },
+        "/metrics": { get: { summary: "Prometheus-compatible metrics", tags: ["System"], responses: { "200": { description: "Metrics text" } } } },
+      },
+      components: {
+        schemas: {
+          Remember: { type: "object", required: ["content"], properties: { type: { type: "string", enum: ["user","feedback","project","reference","episode","skill","instinct"] }, title: { type: "string", maxLength: 500 }, content: { type: "string", maxLength: 50000 }, tags: { type: "array", items: { type: "string" } }, importance: { type: "number", minimum: 0, maximum: 1 }, source: { type: "string" }, expires_in: { type: "string" }, profile: { type: "string" }, project_path: { type: "string" } } },
+          Recall: { type: "object", required: ["query"], properties: { query: { type: "string", maxLength: 2000 }, type: { type: "string" }, tags: { type: "array", items: { type: "string" } }, limit: { type: "integer", minimum: 1, maximum: 100, default: 5 }, semantic_weight: { type: "number" }, fulltext_weight: { type: "number" }, profile: { type: "string" }, project: { type: "string" } } },
+          Forget: { type: "object", properties: { id: { type: "string", format: "uuid" }, type: { type: "string" }, older_than: { type: "string" }, low_confidence: { type: "number" }, expired: { type: "boolean" } } },
+          Link: { type: "object", required: ["source_id","target_id","relation"], properties: { source_id: { type: "string", format: "uuid" }, target_id: { type: "string", format: "uuid" }, relation: { type: "string", enum: ["related","supports","contradicts","supersedes","caused_by","derived_from"] }, strength: { type: "number", minimum: 0, maximum: 1, default: 0.5 } } },
+          Event: { type: "object", properties: { source: { type: "string" }, event_type: { type: "string" }, payload: {} } },
+          ProcessEvents: { type: "object", required: ["ids"], properties: { ids: { type: "array", items: { type: "integer" } } } },
+          Channel: { type: "object", properties: { channel: { type: "string" }, sender: { type: "string" }, message: { type: "string" } } },
+        },
+        securitySchemes: {
+          ApiKey: { type: "apiKey", in: "header", name: "X-Shiba-Key" },
+        },
+      },
+      security: [{ ApiKey: [] }],
+    });
+  });
+
   // ── Error handler ───────────────────────────────────────
   app.onError((err, c) => {
     if (err instanceof ValidationError) {

@@ -8,14 +8,19 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 // Load .env from project root
 dotenv.config({ path: resolve(__dirname, "../../.env") });
 
+if (!process.env.SHB_DB_PASSWORD) {
+  console.error("[shiba] WARNING: SHB_DB_PASSWORD not set. Configure it in .env or environment.");
+}
+
 const pool = new pg.Pool({
   host: process.env.SHB_DB_HOST || "localhost",
   port: parseInt(process.env.SHB_DB_PORT || "5432"),
   database: process.env.SHB_DB_NAME || "shb",
   user: process.env.SHB_DB_USER || "shb",
-  password: process.env.SHB_DB_PASSWORD || "shb_dev_password",
+  password: process.env.SHB_DB_PASSWORD,
   max: 5,
   idleTimeoutMillis: 30000,
+  statement_timeout: 30000, // 30s query timeout
 });
 
 export async function query<T extends pg.QueryResultRow>(

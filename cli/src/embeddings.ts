@@ -1,8 +1,15 @@
 const PROVIDER = process.env.SHB_EMBEDDING_PROVIDER || "ollama";
 const DIMENSIONS = 512;
+const EMBED_TIMEOUT = parseInt(process.env.SHB_EMBED_TIMEOUT_MS || "10000");
+const EMBED_RETRIES = parseInt(process.env.SHB_EMBED_RETRIES || "2");
 
 interface EmbeddingProvider {
   embed(text: string): Promise<number[]>;
+}
+
+function normalizeVec(vec: number[]): number[] {
+  if (vec.length >= DIMENSIONS) return vec.slice(0, DIMENSIONS);
+  return [...vec, ...new Array(DIMENSIONS - vec.length).fill(0)];
 }
 
 const ollama: EmbeddingProvider = {
@@ -14,6 +21,7 @@ const ollama: EmbeddingProvider = {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ model, input: text }),
+      signal: AbortSignal.timeout(EMBED_TIMEOUT),
     });
 
     if (!res.ok) {
@@ -21,11 +29,7 @@ const ollama: EmbeddingProvider = {
     }
 
     const data = (await res.json()) as { embeddings: number[][] };
-    const vec = data.embeddings[0];
-
-    // Truncate or pad to target dimensions
-    if (vec.length >= DIMENSIONS) return vec.slice(0, DIMENSIONS);
-    return [...vec, ...new Array(DIMENSIONS - vec.length).fill(0)];
+    return normalizeVec(data.embeddings[0]);
   },
 };
 
@@ -43,6 +47,7 @@ const openai: EmbeddingProvider = {
         Authorization: `Bearer ${key}`,
       },
       body: JSON.stringify({ model, input: text, dimensions: DIMENSIONS }),
+      signal: AbortSignal.timeout(EMBED_TIMEOUT),
     });
 
     if (!res.ok) {
@@ -66,7 +71,6 @@ const hashtest: EmbeddingProvider = {
       const idx = (lower.charCodeAt(i) * (i + 1) * 31) % DIMENSIONS;
       vec[idx] += 1;
     }
-    // Normalize to unit vector
     const mag = Math.sqrt(vec.reduce((s: number, v: number) => s + v * v, 0)) || 1;
     return vec.map((v: number) => v / mag);
   },
@@ -74,10 +78,35 @@ const hashtest: EmbeddingProvider = {
 
 const providers: Record<string, EmbeddingProvider> = { ollama, openai, hashtest };
 
+/** Embed with retry and exponential backoff. */
 export async function embed(text: string): Promise<number[]> {
   const provider = providers[PROVIDER];
   if (!provider) throw new Error(`Unknown embedding provider: ${PROVIDER}`);
-  return provider.embed(text);
+
+  let lastError: Error | null = null;
+  for (let attempt = 0; attempt <= EMBED_RETRIES; attempt++) {
+    try {
+      return await provider.embed(text);
+    } catch (e) {
+      lastError = e as Error;
+      if (attempt < EMBED_RETRIES) {
+        const delay = Math.min(1000 * Math.pow(2, attempt), 5000);
+        await new Promise((r) => setTimeout(r, delay));
+      }
+    }
+  }
+
+  // If primary provider fails and we have a fallback configured, try it
+  const fallback = process.env.SHB_EMBEDDING_FALLBACK;
+  if (fallback && fallback !== PROVIDER && providers[fallback]) {
+    try {
+      return await providers[fallback].embed(text);
+    } catch {
+      // Fallback also failed — throw original error
+    }
+  }
+
+  throw new Error(`Embedding failed after ${EMBED_RETRIES + 1} attempts: ${lastError?.message}`);
 }
 
 export function pgVector(vec: number[]): string {
