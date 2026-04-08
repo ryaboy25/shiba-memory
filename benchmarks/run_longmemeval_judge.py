@@ -49,6 +49,29 @@ def llm_chat(prompt, max_tokens=200):
     return content
 
 
+def llm_chat_raw(prompt, max_tokens=200):
+    """Like llm_chat but returns FULL response including reasoning for judge parsing."""
+    resp = httpx.post(
+        f"{LLAMA_ENDPOINT}/v1/chat/completions",
+        json={
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": max_tokens,
+            "temperature": 0.1,
+        },
+        timeout=LLAMA_TIMEOUT,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    # Return both reasoning and content for judge analysis
+    msg = data["choices"][0]["message"]
+    full = ""
+    if msg.get("reasoning_content"):
+        full += msg["reasoning_content"]
+    if msg.get("content"):
+        full += " " + msg["content"]
+    return full.strip()
+
+
 def generate_answer(question, context_chunks):
     """Use LLM to answer a question given recalled context. (Phase 4A)"""
     context = "\n\n".join(f"[Memory {i+1}] {chunk}" for i, chunk in enumerate(context_chunks[:10]))
@@ -75,8 +98,57 @@ Expected Answer: {expected}
 Generated Answer: {generated}
 
 Verdict:"""
-    result = llm_chat(prompt, max_tokens=200)
-    return "correct" in result.lower()
+    # Use raw response to capture reasoning + final answer (Gemma thinks before answering)
+    result = llm_chat_raw(prompt, max_tokens=300)
+    result_lower = result.lower()
+
+    # Parse the verdict from Gemma's reasoning chain
+    # Look for final verdict indicators first (strongest signals)
+    if "verdict: correct" in result_lower or "verdict:correct" in result_lower:
+        return True
+    if "verdict: incorrect" in result_lower or "verdict:incorrect" in result_lower:
+        return False
+
+    # Look for conclusion patterns in reasoning
+    # Gemma often says "the answer is correct" or "this is incorrect" in its thinking
+    conclusion_patterns_correct = [
+        "the answer is correct",
+        "is correct",
+        "correctly answers",
+        "conveys the same",
+        "matches the expected",
+        "essentially correct",
+        "the generated answer is correct",
+        "word: correct",
+    ]
+    conclusion_patterns_incorrect = [
+        "the answer is incorrect",
+        "is incorrect",
+        "does not correctly",
+        "does not match",
+        "does not convey",
+        "essentially incorrect",
+        "the generated answer is incorrect",
+        "word: incorrect",
+        "not enough information",
+        "doesn't match",
+        "doesn't correctly",
+    ]
+
+    # Count matches for each side
+    correct_hits = sum(1 for p in conclusion_patterns_correct if p in result_lower)
+    incorrect_hits = sum(1 for p in conclusion_patterns_incorrect if p in result_lower)
+
+    if correct_hits > incorrect_hits:
+        return True
+    if incorrect_hits > correct_hits:
+        return False
+
+    # Fallback: check if "correct" appears more than "incorrect"
+    # (careful: "incorrect" contains "correct")
+    incorrect_count = result_lower.count("incorrect")
+    correct_count = result_lower.count("correct") - incorrect_count
+    return correct_count > incorrect_count
 
 
 def run():
