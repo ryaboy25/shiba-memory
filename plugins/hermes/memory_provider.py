@@ -174,7 +174,7 @@ class ShibaMemoryProvider:
             "automatically link to related knowledge."
         )
 
-    def prefetch(self, query):
+    def prefetch(self, query, **kwargs):
         """Recall relevant context before each turn."""
         try:
             body = {"query": query, "limit": 3}
@@ -192,12 +192,12 @@ class ShibaMemoryProvider:
         except Exception:
             return ""
 
-    def queue_prefetch(self, query):
+    def queue_prefetch(self, query, **kwargs):
         """Pre-warm cache after turns (non-blocking)."""
         # Prefetch is fast enough via gateway, no need for background thread
         pass
 
-    def sync_turn(self, user_content, assistant_content):
+    def sync_turn(self, user_content, assistant_content, **kwargs):
         """Persist conversation turn + run extraction (non-blocking)."""
         def _sync():
             try:
@@ -239,7 +239,7 @@ class ShibaMemoryProvider:
         thread = threading.Thread(target=_sync, daemon=True)
         thread.start()
 
-    def on_session_end(self, messages):
+    def on_session_end(self, messages, **kwargs):
         """Extract key insights when session closes — Tier 2 summarization."""
         try:
             user_msgs = [m for m in messages if m.get("role") == "user"]
@@ -267,7 +267,7 @@ class ShibaMemoryProvider:
         except Exception:
             pass
 
-    def on_pre_compress(self, messages):
+    def on_pre_compress(self, messages, **kwargs):
         """Save context before Hermes compresses conversation."""
         try:
             # Extract last few user messages as context snapshot
