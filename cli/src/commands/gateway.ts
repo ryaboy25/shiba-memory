@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "http";
 import { readFileSync, writeFileSync, existsSync, unlinkSync } from "fs";
+import { timingSafeEqual } from "crypto";
 import { query, disconnect } from "../db.js";
 import { embed, pgVector } from "../embeddings.js";
 import { remember } from "./remember.js";
@@ -12,12 +13,26 @@ const PORT = parseInt(process.env.SHB_GATEWAY_PORT || "18789");
 const BIND_HOST = process.env.SHB_GATEWAY_HOST || "0.0.0.0";
 const API_KEY = process.env.SHB_API_KEY || "";
 const PID_FILE = "/tmp/shiba-gateway.pid";
+const MAX_BODY_BYTES = parseInt(process.env.SHB_MAX_BODY_BYTES || "1048576"); // 1MB default
+const CORS_ORIGIN = process.env.SHB_CORS_ORIGIN || "*";
 
-function parseBody(req: IncomingMessage): Promise<Record<string, unknown>> {
+function parseBody(req: IncomingMessage): Promise<Record<string, unknown> | null> {
   return new Promise((resolve) => {
     let data = "";
-    req.on("data", (chunk: Buffer) => (data += chunk));
+    let bytes = 0;
+    let aborted = false;
+    req.on("data", (chunk: Buffer) => {
+      bytes += chunk.length;
+      if (bytes > MAX_BODY_BYTES) {
+        aborted = true;
+        req.destroy();
+        resolve(null); // null signals 413
+        return;
+      }
+      data += chunk;
+    });
     req.on("end", () => {
+      if (aborted) return;
       try {
         resolve(data ? JSON.parse(data) : {});
       } catch {
@@ -32,12 +47,33 @@ function respond(res: ServerResponse, status: number, body: unknown) {
   res.end(JSON.stringify(body));
 }
 
+/** Parse body with size limit. Returns null and sends 413 if too large. */
+async function safeParseBody(req: IncomingMessage, res: ServerResponse): Promise<Record<string, unknown> | null> {
+  const body = await parseBody(req);
+  if (body === null) {
+    respond(res, 413, { status: "error", message: "Payload too large" });
+    return null;
+  }
+  return body;
+}
+
+function safeCompare(a: string, b: string): boolean {
+  const bufA = Buffer.from(a);
+  const bufB = Buffer.from(b);
+  if (bufA.length !== bufB.length) {
+    // Compare against matching-length buffer to avoid timing leak on length
+    timingSafeEqual(bufA, Buffer.alloc(bufA.length));
+    return false;
+  }
+  return timingSafeEqual(bufA, bufB);
+}
+
 function authenticate(req: IncomingMessage, res: ServerResponse): boolean {
   if (!API_KEY) return true; // No key configured = open access
   const provided = req.headers["x-shiba-key"] as string
     || req.headers["x-shb-key"] as string
     || req.headers["authorization"]?.replace("Bearer ", "");
-  if (provided === API_KEY) return true;
+  if (provided && safeCompare(provided, API_KEY)) return true;
   respond(res, 401, { status: "error", message: "Unauthorized — set X-Shiba-Key header" });
   return false;
 }
@@ -54,7 +90,7 @@ export function startGateway(): void {
 
   const server = createServer(async (req, res) => {
     // CORS
-    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Origin", CORS_ORIGIN);
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type, X-Shiba-Key, X-SHB-Key, Authorization");
     if (req.method === "OPTIONS") { res.writeHead(204); res.end(); return; }
@@ -88,7 +124,8 @@ export function startGateway(): void {
 
       // POST /remember
       if (url === "/remember" && req.method === "POST") {
-        const body = await parseBody(req);
+        const body = await safeParseBody(req, res);
+        if (!body) return;
         const id = await remember({
           type: (body.type as string) || "reference",
           title: (body.title as string) || "Gateway memory",
@@ -106,7 +143,7 @@ export function startGateway(): void {
 
       // POST /recall
       if (url === "/recall" && req.method === "POST") {
-        const body = await parseBody(req);
+        const body = await safeParseBody(req, res); if (!body) return;
         const results = await recall({
           query: (body.query as string) || "",
           type: body.type as string | undefined,
@@ -123,7 +160,7 @@ export function startGateway(): void {
 
       // POST /forget
       if (url === "/forget" && req.method === "POST") {
-        const body = await parseBody(req);
+        const body = await safeParseBody(req, res); if (!body) return;
         const count = await forget({
           id: body.id as string | undefined,
           type: body.type as string | undefined,
@@ -169,7 +206,7 @@ export function startGateway(): void {
 
       // POST /link
       if (url === "/link" && req.method === "POST") {
-        const body = await parseBody(req);
+        const body = await safeParseBody(req, res); if (!body) return;
         const sourceId = body.source_id as string;
         const targetId = body.target_id as string;
         const relation = body.relation as string;
@@ -214,7 +251,7 @@ export function startGateway(): void {
 
       // POST /event
       if (url === "/event" && req.method === "POST") {
-        const body = await parseBody(req);
+        const body = await safeParseBody(req, res); if (!body) return;
         await query(
           `INSERT INTO events_queue (source, event_type, payload)
            VALUES ($1, $2, $3::jsonb)`,
@@ -247,7 +284,7 @@ export function startGateway(): void {
 
       // POST /events/process
       if (url === "/events/process" && req.method === "POST") {
-        const body = await parseBody(req);
+        const body = await safeParseBody(req, res); if (!body) return;
         const ids = body.ids as number[];
         if (ids && ids.length > 0) {
           await query(
@@ -262,7 +299,7 @@ export function startGateway(): void {
 
       // POST /webhook — Generic webhook receiver for external integrations
       if (url === "/webhook" && req.method === "POST") {
-        const body = await parseBody(req);
+        const body = await safeParseBody(req, res); if (!body) return;
         const source = (body.source as string)
           || req.headers["x-webhook-source"] as string
           || "webhook";
@@ -299,7 +336,7 @@ export function startGateway(): void {
 
       // POST /channel — Receives messages from external integrations
       if (url === "/channel" && req.method === "POST") {
-        const body = await parseBody(req);
+        const body = await safeParseBody(req, res); if (!body) return;
         const channel = (body.channel as string) || "unknown";
         const sender = (body.sender as string) || "unknown";
         const message = (body.message as string) || JSON.stringify(body);

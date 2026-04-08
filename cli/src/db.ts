@@ -29,6 +29,26 @@ export async function getClient(): Promise<pg.PoolClient> {
   return pool.connect();
 }
 
+/** Run a function within a transaction. Auto-commits on success, rolls back on error. */
+export async function withTransaction<T>(
+  fn: (txQuery: <R extends pg.QueryResultRow>(text: string, params?: unknown[]) => Promise<pg.QueryResult<R>>) => Promise<T>
+): Promise<T> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const txQuery = <R extends pg.QueryResultRow>(text: string, params?: unknown[]) =>
+      client.query<R>(text, params);
+    const result = await fn(txQuery);
+    await client.query("COMMIT");
+    return result;
+  } catch (e) {
+    await client.query("ROLLBACK");
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
 let disconnected = false;
 export async function disconnect(): Promise<void> {
   if (disconnected) return;
