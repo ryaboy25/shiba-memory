@@ -73,15 +73,13 @@ def llm_chat_raw(prompt, max_tokens=200):
 def generate_answer(question, context_chunks):
     """Use LLM to answer a question given recalled context. (Phase 4A)"""
     context = "\n\n".join(f"[Memory {i+1}] {chunk}" for i, chunk in enumerate(context_chunks[:10]))
-    prompt = f"""You are answering questions about past conversations. Use ONLY the provided context.
-If the context contains contradictory information, prefer the more recent memory (higher number = more recent).
-If the answer is not in the context, say "I don't have enough information."
+    prompt = f"""Answer the question based on the context below. Always attempt an answer even if uncertain. Be concise (1-2 sentences).
 
 Context:
 {context}
 
 Question: {question}
-Answer concisely in 1-2 sentences:"""
+Answer:"""
     return llm_chat(prompt, max_tokens=300)
 
 
