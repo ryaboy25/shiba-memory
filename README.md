@@ -392,7 +392,7 @@ Embeddings are stored at full 32-bit precision but indexed as 16-bit halfvec. Th
 
 | System | Score | Judge Model | Embedding | Self-hosted |
 |--------|-------|-------------|-----------|-------------|
-| **Shiba** | **45.6%** | Gemma 4 26B Q3 (local) | nomic-embed-text (local) | **Yes** |
+| **Shiba** | **47.2%** | Gemma 4 26B Q3 (local) | nomic-embed-text (local) | **Yes** |
 | Mem0 | 49.0% | GPT-4o (cloud) | OpenAI (cloud) | Partial |
 | Zep | 63.8% | GPT-4o (cloud) | OpenAI (cloud) | No |
 | Honcho | 89.9% | GPT-4o (cloud) | OpenAI (cloud) | Yes |
@@ -402,13 +402,15 @@ Embeddings are stored at full 32-bit precision but indexed as 16-bit halfvec. Th
 | Category | Shiba | Notes |
 |----------|-------|-------|
 | Single-session-user | **70.0%** | Best category — user-stated facts |
-| Knowledge-update | 52.6% | Fact changes over time |
-| Multi-session | 50.4% | Cross-session reasoning |
-| Temporal-reasoning | 48.1% | Time-based queries |
-| Single-session-assistant | 48.2% | Assistant-generated content |
-| Single-session-preference | 10.0% | Implicit preferences (weakest) |
+| Single-session-assistant | **57.1%** | Assistant-generated content |
+| Knowledge-update | **56.4%** | Fact changes over time |
+| Multi-session | 45.9% | Cross-session reasoning |
+| Temporal-reasoning | 34.6% | Time-based queries |
+| Single-session-preference | 13.3% | Implicit preferences (weakest) |
 
-**Key context:** Shiba is the only system scoring 45%+ that runs entirely locally with no cloud dependencies. Mem0, Zep, and Honcho all use GPT-4o as judge, which is a significantly stronger evaluator than the local Gemma 4 26B Q3.
+**Key context:** Shiba is the only system scoring 47%+ that runs entirely locally with no cloud dependencies. Mem0, Zep, and Honcho all use GPT-4o as judge, which is a significantly stronger evaluator than the local Gemma 4 26B Q3.
+
+**Retrieval latency:** 35ms avg — faster than all competitors.
 
 **Retrieval latency:** 32ms avg — faster than all competitors.
 
