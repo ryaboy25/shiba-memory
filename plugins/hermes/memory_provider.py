@@ -213,19 +213,41 @@ class ShibaMemoryProvider:
         pass
 
     def sync_turn(self, user_content, assistant_content):
-        """Persist conversation turn as episodic memory (non-blocking)."""
+        """Persist conversation turn + run extraction (non-blocking)."""
         def _sync():
             try:
                 # Store as short-lived episode
                 self._post("/remember", {
                     "type": "episode",
-                    "title": f"Conversation turn",
+                    "title": "Conversation turn",
                     "content": f"User: {user_content[:300]}\nAssistant: {assistant_content[:300]}",
                     "tags": ["hermes-session", f"session-{self.session_id}"],
                     "importance": 0.3,
                     "source": "hermes-hook",
                     "expires_in": "7d",
                 })
+
+                # Tier 1: Pattern extraction on user message (auto-stores via endpoint)
+                if user_content and len(user_content) > 10:
+                    try:
+                        self._post("/extract/patterns", {
+                            "message": user_content[:2000],
+                            "role": "user",
+                        })
+                    except Exception:
+                        pass  # Extraction is best-effort
+
+                # Tier 2: Correction detection + extraction
+                correction_signals = ["no,", "no ", "wrong", "actually", "not right", "instead", "fix ", "change "]
+                if any(user_content.lower().strip().startswith(s) for s in correction_signals):
+                    try:
+                        self._post("/extract/correction", {
+                            "user_message": user_content[:2000],
+                            "assistant_message": assistant_content[:2000],
+                        })
+                    except Exception:
+                        pass  # LLM may not be configured
+
             except Exception:
                 pass  # Non-blocking, don't crash
 
@@ -233,23 +255,30 @@ class ShibaMemoryProvider:
         thread.start()
 
     def on_session_end(self, messages):
-        """Extract key insights when session closes."""
+        """Extract key insights when session closes — Tier 2 summarization."""
         try:
-            # Count significant messages
             user_msgs = [m for m in messages if m.get("role") == "user"]
             if len(user_msgs) < 2:
                 return  # Too short to summarize
 
-            # Store session summary
-            self._post("/remember", {
-                "type": "episode",
-                "title": f"Hermes session summary",
-                "content": f"Session {self.session_id}: {len(messages)} messages, {len(user_msgs)} user turns.",
-                "tags": ["hermes-session", "session-summary"],
-                "importance": 0.4,
-                "source": "hermes-hook",
-                "expires_in": "30d",
-            })
+            # Tier 2: Call extraction summarize endpoint (auto-stores via endpoint)
+            try:
+                recent = messages[-30:]  # Last 30 messages
+                self._post("/extract/summarize", {
+                    "messages": [{"role": m.get("role", "user"), "content": str(m.get("content", ""))[:300]} for m in recent],
+                    "project": self.project or None,
+                })
+            except Exception:
+                # Fallback: store basic summary if LLM extraction fails
+                self._post("/remember", {
+                    "type": "episode",
+                    "title": "Hermes session summary",
+                    "content": f"Session {self.session_id}: {len(messages)} messages, {len(user_msgs)} user turns.",
+                    "tags": ["hermes-session", "session-summary"],
+                    "importance": 0.4,
+                    "source": "hermes-hook",
+                    "expires_in": "30d",
+                })
         except Exception:
             pass
 

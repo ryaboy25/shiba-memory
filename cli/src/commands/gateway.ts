@@ -438,6 +438,84 @@ function createApp() {
     return c.json({ status: "ok", channel: body.channel, sender: body.sender, queued: true });
   });
 
+  // ── Extraction Endpoints ─────────────────────────────────
+
+  const ExtractPatternsSchema = z.object({
+    message: z.string().min(1).max(5000),
+    role: z.enum(["user", "assistant"]).default("user"),
+  });
+
+  app.post("/extract/patterns", async (c) => {
+    const body = await parseAndValidate(c, ExtractPatternsSchema);
+    const { extractPatterns } = await import("../extraction/patterns.js");
+    const facts = extractPatterns(body.message, body.role);
+
+    // Auto-store extracted facts
+    for (const fact of facts) {
+      await remember({
+        type: fact.type,
+        title: fact.title,
+        content: fact.content,
+        tags: fact.tags,
+        importance: fact.confidence,
+        source: "extraction",
+      });
+    }
+
+    return c.json({ status: "ok", count: facts.length, facts });
+  });
+
+  const ExtractCorrectionSchema = z.object({
+    user_message: z.string().min(1).max(5000),
+    assistant_message: z.string().min(1).max(5000),
+  });
+
+  app.post("/extract/correction", async (c) => {
+    const body = await parseAndValidate(c, ExtractCorrectionSchema);
+    const { extractCorrection } = await import("../extraction/targeted.js");
+    const result = await extractCorrection(body.user_message, body.assistant_message);
+
+    // Auto-store extracted facts
+    for (const fact of result.facts) {
+      await remember({
+        type: fact.type,
+        title: fact.title,
+        content: fact.content,
+        tags: fact.tags,
+        importance: fact.confidence,
+        source: "extraction",
+      });
+    }
+
+    return c.json({ status: "ok", count: result.facts.length, facts: result.facts, tokens_used: result.tokens_used });
+  });
+
+  const ExtractSummarizeSchema = z.object({
+    messages: z.array(z.object({ role: z.string(), content: z.string() })).min(1),
+    project: z.string().optional(),
+  });
+
+  app.post("/extract/summarize", async (c) => {
+    const body = await parseAndValidate(c, ExtractSummarizeSchema);
+    const { summarizeSession } = await import("../extraction/targeted.js");
+    const result = await summarizeSession(body.messages, body.project);
+
+    // Auto-store extracted facts
+    for (const fact of result.facts) {
+      await remember({
+        type: fact.type,
+        title: fact.title,
+        content: fact.content,
+        tags: fact.tags,
+        importance: fact.confidence,
+        source: "extraction",
+        expiresIn: fact.type === "episode" ? "30d" : undefined,
+      });
+    }
+
+    return c.json({ status: "ok", count: result.facts.length, facts: result.facts, tokens_used: result.tokens_used });
+  });
+
   // ── Metrics (Prometheus-compatible) ─────────────────────
   app.get("/metrics", async (c) => {
     const stats = await getStats();
