@@ -438,4 +438,21 @@ program
     }));
   }));
 
+// ─── migrate ───────────────────────────────────────────────
+program
+  .command("migrate")
+  .description("Run pending database migrations from schema/ directory")
+  .action(action(async () => {
+    const { migrate: runMigrate } = await import("./commands/migrate.js");
+    const result = await runMigrate();
+    console.log(JSON.stringify({
+      status: "ok",
+      applied: result.applied,
+      skipped: result.skipped,
+      message: result.applied.length > 0
+        ? `Applied ${result.applied.length} migration(s)`
+        : "Database is up to date",
+    }));
+  }));
+
 program.parse();

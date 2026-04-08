@@ -1,82 +1,497 @@
-import { createServer, type IncomingMessage, type ServerResponse } from "http";
-import { readFileSync, writeFileSync, existsSync, unlinkSync } from "fs";
+import { Hono } from "hono";
+import { serve } from "@hono/node-server";
+import { cors } from "hono/cors";
+import { z } from "zod";
 import { timingSafeEqual } from "crypto";
+import { readFileSync, writeFileSync, existsSync, unlinkSync } from "fs";
+import pino from "pino";
 import { query, disconnect } from "../db.js";
-import { embed, pgVector } from "../embeddings.js";
 import { remember } from "./remember.js";
 import { recall } from "./recall.js";
 import { forget } from "./forget.js";
 import { linkMemories, getRelated, autoLinkAll } from "./link.js";
 import { getStats, decayMemories, consolidate } from "./reflect.js";
 
+import type { Context, Next } from "hono";
+import type { Server } from "http";
+
+// ── Config ──────────────────────────────────────────────────
 const PORT = parseInt(process.env.SHB_GATEWAY_PORT || "18789");
 const BIND_HOST = process.env.SHB_GATEWAY_HOST || "0.0.0.0";
 const API_KEY = process.env.SHB_API_KEY || "";
 const PID_FILE = "/tmp/shiba-gateway.pid";
-const MAX_BODY_BYTES = parseInt(process.env.SHB_MAX_BODY_BYTES || "1048576"); // 1MB default
 const CORS_ORIGIN = process.env.SHB_CORS_ORIGIN || "*";
+const MAX_BODY_BYTES = parseInt(process.env.SHB_MAX_BODY_BYTES || "1048576");
+const RATE_LIMIT_RPM = parseInt(process.env.SHB_RATE_LIMIT_RPM || "120");
 
-function parseBody(req: IncomingMessage): Promise<Record<string, unknown> | null> {
-  return new Promise((resolve) => {
-    let data = "";
-    let bytes = 0;
-    let aborted = false;
-    req.on("data", (chunk: Buffer) => {
-      bytes += chunk.length;
-      if (bytes > MAX_BODY_BYTES) {
-        aborted = true;
-        req.destroy();
-        resolve(null); // null signals 413
-        return;
-      }
-      data += chunk;
-    });
-    req.on("end", () => {
-      if (aborted) return;
-      try {
-        resolve(data ? JSON.parse(data) : {});
-      } catch {
-        resolve({});
-      }
-    });
-  });
-}
+const logger = pino({ level: process.env.SHB_LOG_LEVEL || "info" });
 
-function respond(res: ServerResponse, status: number, body: unknown) {
-  res.writeHead(status, { "Content-Type": "application/json" });
-  res.end(JSON.stringify(body));
-}
+// ── Zod Schemas ─────────────────────────────────────────────
 
-/** Parse body with size limit. Returns null and sends 413 if too large. */
-async function safeParseBody(req: IncomingMessage, res: ServerResponse): Promise<Record<string, unknown> | null> {
-  const body = await parseBody(req);
-  if (body === null) {
-    respond(res, 413, { status: "error", message: "Payload too large" });
-    return null;
-  }
-  return body;
-}
+const RememberSchema = z.object({
+  type: z.enum(["user", "feedback", "project", "reference", "episode", "skill", "instinct"]).default("reference"),
+  title: z.string().min(1).max(500).default("Gateway memory"),
+  content: z.string().min(1).max(50000),
+  tags: z.array(z.string().max(100)).default(["gateway"]),
+  importance: z.number().min(0).max(1).default(0.5),
+  source: z.string().max(50).default("gateway"),
+  expires_in: z.string().max(20).optional(),
+  profile: z.string().max(50).optional(),
+  project_path: z.string().max(500).optional(),
+});
+
+const RecallSchema = z.object({
+  query: z.string().min(1).max(2000),
+  type: z.string().optional(),
+  tags: z.array(z.string()).optional(),
+  limit: z.number().int().min(1).max(100).default(5),
+  semantic_weight: z.number().min(0).max(1).optional(),
+  fulltext_weight: z.number().min(0).max(1).optional(),
+  profile: z.string().optional(),
+  project: z.string().optional(),
+});
+
+const ForgetSchema = z.object({
+  id: z.string().uuid().optional(),
+  type: z.string().optional(),
+  older_than: z.string().optional(),
+  low_confidence: z.number().optional(),
+  expired: z.boolean().optional(),
+});
+
+const LinkSchema = z.object({
+  source_id: z.string().uuid(),
+  target_id: z.string().uuid(),
+  relation: z.enum(["related", "supports", "contradicts", "supersedes", "caused_by", "derived_from"]),
+  strength: z.number().min(0).max(1).default(0.5),
+});
+
+const EventSchema = z.object({
+  source: z.string().max(100).default("gateway"),
+  event_type: z.string().max(100).default("message"),
+  payload: z.unknown().optional(),
+});
+
+const ProcessEventsSchema = z.object({
+  ids: z.array(z.number().int()),
+});
+
+const WebhookSchema = z.object({
+  source: z.string().optional(),
+  event_type: z.string().optional(),
+  type: z.string().optional(),
+  message: z.string().optional(),
+  text: z.string().optional(),
+  content: z.string().optional(),
+}).passthrough();
+
+const ChannelSchema = z.object({
+  channel: z.string().default("unknown"),
+  sender: z.string().default("unknown"),
+  message: z.string().default(""),
+});
+
+const UuidParam = z.string().uuid();
+
+// ── Helpers ─────────────────────────────────────────────────
 
 function safeCompare(a: string, b: string): boolean {
   const bufA = Buffer.from(a);
   const bufB = Buffer.from(b);
   if (bufA.length !== bufB.length) {
-    // Compare against matching-length buffer to avoid timing leak on length
     timingSafeEqual(bufA, Buffer.alloc(bufA.length));
     return false;
   }
   return timingSafeEqual(bufA, bufB);
 }
 
-function authenticate(req: IncomingMessage, res: ServerResponse): boolean {
-  if (!API_KEY) return true; // No key configured = open access
-  const provided = req.headers["x-shiba-key"] as string
-    || req.headers["x-shb-key"] as string
-    || req.headers["authorization"]?.replace("Bearer ", "");
-  if (provided && safeCompare(provided, API_KEY)) return true;
-  respond(res, 401, { status: "error", message: "Unauthorized — set X-Shiba-Key header" });
-  return false;
+// ── Rate Limiter ────────────────────────────────────────────
+const rateBuckets = new Map<string, { count: number; resetAt: number }>();
+
+function checkRateLimit(ip: string): boolean {
+  const now = Date.now();
+  const bucket = rateBuckets.get(ip);
+  if (!bucket || now >= bucket.resetAt) {
+    rateBuckets.set(ip, { count: 1, resetAt: now + 60_000 });
+    return true;
+  }
+  bucket.count++;
+  return bucket.count <= RATE_LIMIT_RPM;
 }
+
+// Clean stale buckets every 5 minutes
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, bucket] of rateBuckets) {
+    if (now >= bucket.resetAt) rateBuckets.delete(ip);
+  }
+}, 300_000).unref();
+
+// ── Middleware ───────────────────────────────────────────────
+
+async function authMiddleware(c: Context, next: Next) {
+  if (!API_KEY) return next();
+  const provided = c.req.header("x-shiba-key")
+    || c.req.header("x-shb-key")
+    || c.req.header("authorization")?.replace("Bearer ", "");
+  if (provided && safeCompare(provided, API_KEY)) return next();
+  logger.warn({ path: c.req.path, ip: c.req.header("x-forwarded-for") }, "auth_failed");
+  return c.json({ status: "error", code: "UNAUTHORIZED", message: "Set X-Shiba-Key header" }, 401);
+}
+
+async function rateLimitMiddleware(c: Context, next: Next) {
+  const ip = c.req.header("x-forwarded-for") || c.req.header("x-real-ip") || "unknown";
+  if (!checkRateLimit(ip)) {
+    logger.warn({ ip, path: c.req.path }, "rate_limited");
+    return c.json({ status: "error", code: "RATE_LIMITED", message: "Too many requests" }, 429);
+  }
+  return next();
+}
+
+async function requestLogger(c: Context, next: Next) {
+  const start = Date.now();
+  await next();
+  const ms = Date.now() - start;
+  logger.info({
+    method: c.req.method,
+    path: c.req.path,
+    status: c.res.status,
+    ms,
+  }, "request");
+}
+
+async function bodySizeMiddleware(c: Context, next: Next) {
+  const contentLength = c.req.header("content-length");
+  if (contentLength && parseInt(contentLength) > MAX_BODY_BYTES) {
+    return c.json({ status: "error", code: "PAYLOAD_TOO_LARGE", message: "Body exceeds size limit" }, 413);
+  }
+  return next();
+}
+
+// ── Validation ──────────────────────────────────────────────
+
+class ValidationError extends Error {
+  constructor(public code: string, message: string, public errors?: { path: string; message: string }[]) {
+    super(message);
+  }
+}
+
+async function parseAndValidate<T>(c: Context, schema: z.ZodSchema<T>): Promise<T> {
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    throw new ValidationError("INVALID_JSON", "Invalid JSON body");
+  }
+  const result = schema.safeParse(body);
+  if (!result.success) {
+    throw new ValidationError(
+      "VALIDATION_ERROR",
+      "Invalid request body",
+      result.error.issues.map((i) => ({ path: i.path.join("."), message: i.message })),
+    );
+  }
+  return result.data;
+}
+
+// ── App ─────────────────────────────────────────────────────
+
+function createApp() {
+  const app = new Hono();
+
+  // Global middleware
+  app.use("*", cors({ origin: CORS_ORIGIN }));
+  app.use("*", requestLogger);
+  app.use("*", bodySizeMiddleware);
+  app.use("*", rateLimitMiddleware);
+
+  // Health — no auth
+  app.get("/health", async (c) => {
+    let dbLatencyMs = -1;
+    try {
+      const start = Date.now();
+      await query("SELECT 1");
+      dbLatencyMs = Date.now() - start;
+    } catch { /* db down */ }
+    return c.json({
+      status: "ok",
+      uptime_seconds: Math.floor(process.uptime()),
+      db_latency_ms: dbLatencyMs,
+    });
+  });
+
+  // Auth required for everything below
+  app.use("*", authMiddleware);
+
+  // ── Status ──────────────────────────────────────────────
+  app.get("/status", async (c) => {
+    const stats = await getStats();
+    const events = await query<{ count: string }>(
+      `SELECT COUNT(*)::TEXT as count FROM events_queue WHERE NOT processed`
+    );
+    return c.json({
+      status: "ok",
+      brain: stats,
+      pending_events: parseInt(events.rows[0].count),
+      uptime_seconds: Math.floor(process.uptime()),
+    });
+  });
+
+  // ── Remember ────────────────────────────────────────────
+  app.post("/remember", async (c) => {
+    const body = await parseAndValidate(c, RememberSchema);
+
+    const id = await remember({
+      type: body.type,
+      title: body.title,
+      content: body.content,
+      tags: body.tags,
+      importance: body.importance,
+      source: body.source,
+      expiresIn: body.expires_in,
+      profile: body.profile,
+      projectPath: body.project_path,
+    });
+    return c.json({ status: "ok", id });
+  });
+
+  // ── Recall ──────────────────────────────────────────────
+  app.post("/recall", async (c) => {
+    const body = await parseAndValidate(c, RecallSchema);
+
+    const results = await recall({
+      query: body.query,
+      type: body.type,
+      tags: body.tags,
+      limit: body.limit,
+      semanticWeight: body.semantic_weight,
+      fulltextWeight: body.fulltext_weight,
+      profile: body.profile,
+      project: body.project,
+    });
+    return c.json({ status: "ok", count: results.length, memories: results });
+  });
+
+  // ── Forget ──────────────────────────────────────────────
+  app.post("/forget", async (c) => {
+    const body = await parseAndValidate(c, ForgetSchema);
+
+    const count = await forget({
+      id: body.id,
+      type: body.type,
+      olderThan: body.older_than,
+      lowConfidence: body.low_confidence,
+      expired: body.expired,
+    });
+    return c.json({ status: "ok", deleted: count });
+  });
+
+  // ── Memory by ID ────────────────────────────────────────
+  app.get("/memory/:id", async (c) => {
+    const id = c.req.param("id");
+    const parsed = UuidParam.safeParse(id);
+    if (!parsed.success) return c.json({ status: "error", code: "INVALID_ID", message: "Invalid UUID" }, 400);
+
+    const result = await query<{
+      id: string; type: string; title: string; content: string;
+      tags: string[]; importance: number; confidence: number;
+      metadata: Record<string, unknown>; profile: string;
+      project_path: string | null; created_at: string;
+      last_accessed_at: string | null; access_count: number;
+    }>(
+      `SELECT id, type, title, content, tags, importance, confidence,
+              metadata, profile, project_path, created_at,
+              last_accessed_at, access_count
+       FROM memories WHERE id = $1`, [id]
+    );
+    if (result.rows.length === 0) {
+      return c.json({ status: "error", code: "NOT_FOUND", message: "Memory not found" }, 404);
+    }
+    await query(`SELECT touch_memory($1)`, [id]);
+    return c.json({ status: "ok", memory: result.rows[0] });
+  });
+
+  app.delete("/memory/:id", async (c) => {
+    const id = c.req.param("id");
+    const parsed = UuidParam.safeParse(id);
+    if (!parsed.success) return c.json({ status: "error", code: "INVALID_ID", message: "Invalid UUID" }, 400);
+
+    const count = await forget({ id });
+    return c.json({ status: "ok", deleted: count });
+  });
+
+  // ── Links ───────────────────────────────────────────────
+  app.post("/link", async (c) => {
+    const body = await parseAndValidate(c, LinkSchema);
+
+    await linkMemories(body.source_id, body.target_id, body.relation, body.strength);
+    return c.json({ status: "ok" });
+  });
+
+  app.get("/links/:id", async (c) => {
+    const id = c.req.param("id");
+    const parsed = UuidParam.safeParse(id);
+    if (!parsed.success) return c.json({ status: "error", code: "INVALID_ID", message: "Invalid UUID" }, 400);
+
+    const links = await getRelated(id);
+    return c.json({ status: "ok", links });
+  });
+
+  app.post("/link/auto", async (c) => {
+    const count = await autoLinkAll();
+    return c.json({ status: "ok", links_created: count });
+  });
+
+  // ── Reflect ─────────────────────────────────────────────
+  app.post("/reflect/consolidate", async (c) => {
+    const result = await consolidate();
+    return c.json({ status: "ok", ...result });
+  });
+
+  app.post("/reflect/decay", async (c) => {
+    const result = await decayMemories();
+    return c.json({ status: "ok", ...result });
+  });
+
+  // ── Events ──────────────────────────────────────────────
+  app.post("/event", async (c) => {
+    const body = await parseAndValidate(c, EventSchema);
+
+    await query(
+      `INSERT INTO events_queue (source, event_type, payload) VALUES ($1, $2, $3::jsonb)`,
+      [body.source, body.event_type, JSON.stringify(body.payload || {})]
+    );
+    return c.json({ status: "ok", queued: true });
+  });
+
+  app.get("/events", async (c) => {
+    const events = await query<{
+      id: number; source: string; event_type: string; payload: unknown; created_at: string;
+    }>(
+      `SELECT id, source, event_type, payload, created_at
+       FROM events_queue WHERE NOT processed
+       ORDER BY created_at ASC LIMIT 50`
+    );
+    return c.json({ status: "ok", events: events.rows });
+  });
+
+  app.post("/events/process", async (c) => {
+    const body = await parseAndValidate(c, ProcessEventsSchema);
+
+    if (body.ids.length > 0) {
+      await query(
+        `UPDATE events_queue SET processed = true, processed_at = now() WHERE id = ANY($1::bigint[])`,
+        [body.ids]
+      );
+    }
+    return c.json({ status: "ok", processed: body.ids.length });
+  });
+
+  // ── Webhook ─────────────────────────────────────────────
+  app.post("/webhook", async (c) => {
+    const body = await parseAndValidate(c, WebhookSchema);
+
+    const source = body.source || c.req.header("x-webhook-source") || "webhook";
+    const eventType = body.event_type || body.type || "webhook";
+
+    await query(
+      `INSERT INTO events_queue (source, event_type, payload) VALUES ($1, $2, $3::jsonb)`,
+      [source, eventType, JSON.stringify(body)]
+    );
+
+    const message = body.message || body.text || body.content;
+    if (message && message.length > 20) {
+      await remember({
+        type: "episode",
+        title: `Webhook: ${source} ${eventType}`,
+        content: message.slice(0, 2000),
+        tags: ["webhook", source, eventType],
+        importance: 0.5,
+        source: "gateway",
+        expiresIn: "7d",
+      });
+    }
+
+    return c.json({ status: "ok", queued: true, source, event_type: eventType });
+  });
+
+  // ── Channel ─────────────────────────────────────────────
+  app.post("/channel", async (c) => {
+    const body = await parseAndValidate(c, ChannelSchema);
+
+
+    await query(
+      `INSERT INTO events_queue (source, event_type, payload) VALUES ($1, 'channel_message', $2::jsonb)`,
+      [`channel:${body.channel}`, JSON.stringify(body)]
+    );
+
+    await remember({
+      type: "episode",
+      title: `Channel message from ${body.sender} via ${body.channel}`,
+      content: body.message.slice(0, 2000),
+      tags: ["channel", body.channel, body.sender],
+      importance: 0.6,
+      source: "gateway",
+      expiresIn: "30d",
+    });
+
+    return c.json({ status: "ok", channel: body.channel, sender: body.sender, queued: true });
+  });
+
+  // ── Metrics (Prometheus-compatible) ─────────────────────
+  app.get("/metrics", async (c) => {
+    const stats = await getStats();
+    let dbLatency = -1;
+    try {
+      const start = Date.now();
+      await query("SELECT 1");
+      dbLatency = Date.now() - start;
+    } catch { /* db down */ }
+
+    const lines = [
+      `# HELP shiba_memories_total Total number of memories stored`,
+      `# TYPE shiba_memories_total gauge`,
+      `shiba_memories_total ${stats.total_memories}`,
+      `# HELP shiba_links_total Total number of memory links`,
+      `# TYPE shiba_links_total gauge`,
+      `shiba_links_total ${stats.total_links}`,
+      `# HELP shiba_avg_confidence Average memory confidence`,
+      `# TYPE shiba_avg_confidence gauge`,
+      `shiba_avg_confidence ${stats.avg_confidence?.toFixed(3) || 0}`,
+      `# HELP shiba_db_latency_ms Database round-trip latency in milliseconds`,
+      `# TYPE shiba_db_latency_ms gauge`,
+      `shiba_db_latency_ms ${dbLatency}`,
+      `# HELP shiba_uptime_seconds Process uptime in seconds`,
+      `# TYPE shiba_uptime_seconds gauge`,
+      `shiba_uptime_seconds ${Math.floor(process.uptime())}`,
+    ];
+    return c.text(lines.join("\n") + "\n", 200, { "Content-Type": "text/plain; version=0.0.4" });
+  });
+
+  // ── Error handler ───────────────────────────────────────
+  app.onError((err, c) => {
+    if (err instanceof ValidationError) {
+      return c.json({
+        status: "error",
+        code: err.code,
+        message: err.message,
+        ...(err.errors ? { errors: err.errors } : {}),
+      }, 400);
+    }
+    logger.error({ err: err.message, path: c.req.path, method: c.req.method }, "unhandled_error");
+    return c.json({ status: "error", code: "INTERNAL_ERROR", message: err.message }, 500);
+  });
+
+  app.notFound((c) => {
+    return c.json({ status: "error", code: "NOT_FOUND", message: "Endpoint not found" }, 404);
+  });
+
+  return app;
+}
+
+// ── Server lifecycle (unchanged CLI interface) ──────────────
+
+let serverInstance: Server | null = null;
 
 export function startGateway(): void {
   if (existsSync(PID_FILE)) {
@@ -88,289 +503,15 @@ export function startGateway(): void {
     } catch { /* stale pid */ }
   }
 
-  const server = createServer(async (req, res) => {
-    // CORS
-    res.setHeader("Access-Control-Allow-Origin", CORS_ORIGIN);
-    res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type, X-Shiba-Key, X-SHB-Key, Authorization");
-    if (req.method === "OPTIONS") { res.writeHead(204); res.end(); return; }
+  const app = createApp();
 
-    // GET /health — lightweight, no auth required
-    if (req.url === "/health" && req.method === "GET") {
-      respond(res, 200, { status: "ok", uptime_seconds: Math.floor(process.uptime()) });
-      return;
-    }
-
-    // Auth check for all other endpoints
-    if (!authenticate(req, res)) return;
-
-    const url = req.url || "/";
-
-    try {
-      // GET /status
-      if (url === "/status" && req.method === "GET") {
-        const stats = await getStats();
-        const events = await query<{ count: string }>(
-          `SELECT COUNT(*)::TEXT as count FROM events_queue WHERE NOT processed`
-        );
-        respond(res, 200, {
-          status: "ok",
-          brain: stats,
-          pending_events: parseInt(events.rows[0].count),
-          uptime_seconds: Math.floor(process.uptime()),
-        });
-        return;
-      }
-
-      // POST /remember
-      if (url === "/remember" && req.method === "POST") {
-        const body = await safeParseBody(req, res);
-        if (!body) return;
-        const id = await remember({
-          type: (body.type as string) || "reference",
-          title: (body.title as string) || "Gateway memory",
-          content: (body.content as string) || "",
-          tags: (body.tags as string[]) || ["gateway"],
-          importance: (body.importance as number) || 0.5,
-          source: (body.source as string) || "gateway",
-          expiresIn: body.expires_in as string | undefined,
-          profile: (body.profile as string) || undefined,
-          projectPath: body.project_path as string | undefined,
-        });
-        respond(res, 200, { status: "ok", id });
-        return;
-      }
-
-      // POST /recall
-      if (url === "/recall" && req.method === "POST") {
-        const body = await safeParseBody(req, res); if (!body) return;
-        const results = await recall({
-          query: (body.query as string) || "",
-          type: body.type as string | undefined,
-          tags: body.tags as string[] | undefined,
-          limit: (body.limit as number) || 5,
-          semanticWeight: body.semantic_weight as number | undefined,
-          fulltextWeight: body.fulltext_weight as number | undefined,
-          profile: body.profile as string | undefined,
-          project: body.project as string | undefined,
-        });
-        respond(res, 200, { status: "ok", count: results.length, memories: results });
-        return;
-      }
-
-      // POST /forget
-      if (url === "/forget" && req.method === "POST") {
-        const body = await safeParseBody(req, res); if (!body) return;
-        const count = await forget({
-          id: body.id as string | undefined,
-          type: body.type as string | undefined,
-          olderThan: body.older_than as string | undefined,
-          lowConfidence: body.low_confidence as number | undefined,
-          expired: body.expired as boolean | undefined,
-        });
-        respond(res, 200, { status: "ok", deleted: count });
-        return;
-      }
-
-      // DELETE /memory/:id
-      if (url.startsWith("/memory/") && req.method === "DELETE") {
-        const id = url.slice("/memory/".length);
-        const count = await forget({ id });
-        respond(res, 200, { status: "ok", deleted: count });
-        return;
-      }
-
-      // GET /memory/:id
-      if (url.startsWith("/memory/") && req.method === "GET") {
-        const id = url.slice("/memory/".length);
-        const result = await query<{
-          id: string; type: string; title: string; content: string;
-          tags: string[]; importance: number; confidence: number;
-          metadata: Record<string, unknown>; profile: string;
-          project_path: string | null; created_at: string;
-          last_accessed_at: string | null; access_count: number;
-        }>(
-          `SELECT id, type, title, content, tags, importance, confidence,
-                  metadata, profile, project_path, created_at,
-                  last_accessed_at, access_count
-           FROM memories WHERE id = $1`, [id]
-        );
-        if (result.rows.length === 0) {
-          respond(res, 404, { status: "error", message: "Memory not found" });
-        } else {
-          await query(`SELECT touch_memory($1)`, [id]);
-          respond(res, 200, { status: "ok", memory: result.rows[0] });
-        }
-        return;
-      }
-
-      // POST /link
-      if (url === "/link" && req.method === "POST") {
-        const body = await safeParseBody(req, res); if (!body) return;
-        const sourceId = body.source_id as string;
-        const targetId = body.target_id as string;
-        const relation = body.relation as string;
-        const strength = (body.strength as number) || 0.5;
-        if (!sourceId || !targetId || !relation) {
-          respond(res, 400, { status: "error", message: "source_id, target_id, and relation are required" });
-          return;
-        }
-        await linkMemories(sourceId, targetId, relation, strength);
-        respond(res, 200, { status: "ok" });
-        return;
-      }
-
-      // GET /links/:id
-      if (url.startsWith("/links/") && req.method === "GET") {
-        const id = url.slice("/links/".length);
-        const links = await getRelated(id);
-        respond(res, 200, { status: "ok", links });
-        return;
-      }
-
-      // POST /link/auto
-      if (url === "/link/auto" && req.method === "POST") {
-        const count = await autoLinkAll();
-        respond(res, 200, { status: "ok", links_created: count });
-        return;
-      }
-
-      // POST /reflect/consolidate
-      if (url === "/reflect/consolidate" && req.method === "POST") {
-        const result = await consolidate();
-        respond(res, 200, { status: "ok", ...result });
-        return;
-      }
-
-      // POST /reflect/decay
-      if (url === "/reflect/decay" && req.method === "POST") {
-        const result = await decayMemories();
-        respond(res, 200, { status: "ok", ...result });
-        return;
-      }
-
-      // POST /event
-      if (url === "/event" && req.method === "POST") {
-        const body = await safeParseBody(req, res); if (!body) return;
-        await query(
-          `INSERT INTO events_queue (source, event_type, payload)
-           VALUES ($1, $2, $3::jsonb)`,
-          [
-            (body.source as string) || "gateway",
-            (body.event_type as string) || "message",
-            JSON.stringify(body.payload || body),
-          ]
-        );
-        respond(res, 200, { status: "ok", queued: true });
-        return;
-      }
-
-      // GET /events
-      if (url === "/events" && req.method === "GET") {
-        const events = await query<{
-          id: number;
-          source: string;
-          event_type: string;
-          payload: unknown;
-          created_at: string;
-        }>(
-          `SELECT id, source, event_type, payload, created_at
-           FROM events_queue WHERE NOT processed
-           ORDER BY created_at ASC LIMIT 50`
-        );
-        respond(res, 200, { status: "ok", events: events.rows });
-        return;
-      }
-
-      // POST /events/process
-      if (url === "/events/process" && req.method === "POST") {
-        const body = await safeParseBody(req, res); if (!body) return;
-        const ids = body.ids as number[];
-        if (ids && ids.length > 0) {
-          await query(
-            `UPDATE events_queue SET processed = true, processed_at = now()
-             WHERE id = ANY($1::bigint[])`,
-            [ids]
-          );
-        }
-        respond(res, 200, { status: "ok", processed: ids?.length || 0 });
-        return;
-      }
-
-      // POST /webhook — Generic webhook receiver for external integrations
-      if (url === "/webhook" && req.method === "POST") {
-        const body = await safeParseBody(req, res); if (!body) return;
-        const source = (body.source as string)
-          || req.headers["x-webhook-source"] as string
-          || "webhook";
-        const eventType = (body.event_type as string)
-          || (body.type as string)
-          || "webhook";
-
-        await query(
-          `INSERT INTO events_queue (source, event_type, payload)
-           VALUES ($1, $2, $3::jsonb)`,
-          [source, eventType, JSON.stringify(body)]
-        );
-
-        // Also store as a memory if it looks important
-        const message = (body.message as string)
-          || (body.text as string)
-          || (body.content as string);
-
-        if (message && message.length > 20) {
-          await remember({
-            type: "episode",
-            title: `Webhook: ${source} ${eventType}`,
-            content: message.slice(0, 2000),
-            tags: ["webhook", source, eventType],
-            importance: 0.5,
-            source: "gateway",
-            expiresIn: "7d",
-          });
-        }
-
-        respond(res, 200, { status: "ok", queued: true, source, event_type: eventType });
-        return;
-      }
-
-      // POST /channel — Receives messages from external integrations
-      if (url === "/channel" && req.method === "POST") {
-        const body = await safeParseBody(req, res); if (!body) return;
-        const channel = (body.channel as string) || "unknown";
-        const sender = (body.sender as string) || "unknown";
-        const message = (body.message as string) || JSON.stringify(body);
-
-        // Queue as event
-        await query(
-          `INSERT INTO events_queue (source, event_type, payload)
-           VALUES ($1, 'channel_message', $2::jsonb)`,
-          [`channel:${channel}`, JSON.stringify({ channel, sender, message })]
-        );
-
-        // Store as episode memory
-        await remember({
-          type: "episode",
-          title: `Channel message from ${sender} via ${channel}`,
-          content: message.slice(0, 2000),
-          tags: ["channel", channel, sender],
-          importance: 0.6,
-          source: "gateway",
-          expiresIn: "30d",
-        });
-
-        respond(res, 200, { status: "ok", channel, sender, queued: true });
-        return;
-      }
-
-      respond(res, 404, { status: "error", message: "Not found" });
-    } catch (e) {
-      respond(res, 500, { status: "error", message: (e as Error).message });
-    }
-  });
-
-  server.listen(PORT, BIND_HOST, () => {
+  serverInstance = serve({
+    fetch: app.fetch,
+    port: PORT,
+    hostname: BIND_HOST,
+  }, () => {
     writeFileSync(PID_FILE, String(process.pid));
+    logger.info({ pid: process.pid, host: BIND_HOST, port: PORT, auth: !!API_KEY }, "gateway_started");
     console.log(JSON.stringify({
       status: "ok",
       message: "Shiba Gateway started",
@@ -378,6 +519,7 @@ export function startGateway(): void {
       host: BIND_HOST,
       port: PORT,
       auth: API_KEY ? "enabled" : "disabled (set SHB_API_KEY to secure)",
+      features: ["zod-validation", "rate-limiting", "body-size-limits", "structured-logging", "prometheus-metrics"],
       endpoints: [
         "GET  /health",
         "GET  /status",
@@ -396,13 +538,14 @@ export function startGateway(): void {
         "POST /events/process",
         "POST /webhook",
         "POST /channel",
+        "GET  /metrics",
       ],
     }));
-  });
+  }) as Server;
 
   const shutdown = () => {
     try { unlinkSync(PID_FILE); } catch { /* ignore */ }
-    server.close();
+    if (serverInstance) serverInstance.close();
     disconnect().then(() => process.exit(0));
   };
 
@@ -439,3 +582,6 @@ export function gatewayStatus(): { running: boolean; pid?: number; port: number 
     return { running: false, port: PORT };
   }
 }
+
+// Export app factory for testing
+export { createApp };
