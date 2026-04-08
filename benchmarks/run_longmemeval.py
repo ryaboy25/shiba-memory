@@ -27,7 +27,12 @@ def run():
         return
 
     print("Loading LongMemEval oracle split...")
-    ds = load_dataset("xiaowu0162/longmemeval-cleaned", split="longmemeval_oracle")
+    # Use streaming to avoid downloading the 2.7GB medium split
+    ds = list(load_dataset(
+        "xiaowu0162/longmemeval-cleaned",
+        split="longmemeval_oracle",
+        streaming=True,
+    ))
     print(f"Loaded {len(ds)} questions\n")
 
     adapter = ShibaAdapter()
