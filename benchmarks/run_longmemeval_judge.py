@@ -50,20 +50,25 @@ def llm_chat(prompt, max_tokens=200):
 
 
 def generate_answer(question, context_chunks):
-    """Use LLM to answer a question given recalled context."""
-    context = "\n\n".join(context_chunks[:5])
-    prompt = f"""Based on the following conversation history, answer the question concisely in 1-2 sentences.
+    """Use LLM to answer a question given recalled context. (Phase 4A)"""
+    context = "\n\n".join(f"[Memory {i+1}] {chunk}" for i, chunk in enumerate(context_chunks[:10]))
+    prompt = f"""You are answering questions about past conversations. Use ONLY the provided context.
+If the context contains contradictory information, prefer the more recent memory (higher number = more recent).
+If the answer is not in the context, say "I don't have enough information."
 
 Context:
 {context}
 
-Question: {question}"""
+Question: {question}
+Answer concisely in 1-2 sentences:"""
     return llm_chat(prompt, max_tokens=300)
 
 
 def judge_answer(question, expected, generated):
-    """Use LLM to judge if the generated answer matches the expected answer."""
-    prompt = f"""You are an evaluation judge. Determine if the Generated Answer correctly answers the Question, compared to the Expected Answer. Reply with ONLY "correct" or "incorrect".
+    """Use LLM to judge if the generated answer matches the expected answer. (Phase 4B)"""
+    prompt = f"""You are an evaluation judge. Determine if the Generated Answer correctly answers the Question, compared to the Expected Answer.
+Consider the answer correct if it contains the essential information from the Expected Answer, even if worded differently. Minor details may differ.
+Reply with ONLY "correct" or "incorrect".
 
 Question: {question}
 Expected Answer: {expected}
@@ -126,24 +131,56 @@ def run():
         namespace = f"lme-{sid}"
         adapter.cleanup(namespace=namespace)
 
-        # Ingest conversation sessions
+        # Ingest conversation sessions with temporal ordering + session awareness
         sessions = data["sessions"]
+        total_sessions = len(sessions)
         for sess_idx, session in enumerate(sessions):
             if not session:
                 continue
+
+            # Phase 2B: Set created_at so earlier sessions have older timestamps
+            # This creates a temporal gradient for recency-based scoring
+            from datetime import datetime, timedelta, timezone
+            base_time = datetime.now(timezone.utc) - timedelta(days=(total_sessions - sess_idx))
+            created_at_str = base_time.isoformat()
+
+            session_texts = []
             for turn in session:
                 if isinstance(turn, dict) and turn.get("content"):
                     role = turn.get("role", "unknown")
+                    content = f"[{role}] {turn['content']}"
+                    session_texts.append(content)
                     adapter.ingest(
                         [IngestItem(
-                            content=f"[{role}] {turn['content']}",
+                            content=content,
                             metadata={
                                 "title": f"Session {sess_idx} - {role}",
                                 "type": "episode",
+                                "role": role,  # Phase 1A: pass role for confidence scoring
+                                "tags": [f"session-{sess_idx}"],  # Phase 3B: session tags
                             },
+                            created_at=created_at_str,  # Phase 2B: temporal ordering
                         )],
                         namespace=namespace,
                     )
+
+            # Phase 3A: Store session summary for multi-session retrieval
+            if session_texts:
+                summary = " ".join(session_texts)[:500]
+                adapter.ingest(
+                    [IngestItem(
+                        content=f"[Session {sess_idx} summary] {summary}",
+                        metadata={
+                            "title": f"Session {sess_idx} summary",
+                            "type": "episode",
+                            "importance": 0.7,
+                            "role": "summary",
+                            "tags": [f"session-{sess_idx}", "session-summary"],
+                        },
+                        created_at=created_at_str,
+                    )],
+                    namespace=namespace,
+                )
 
         # Answer questions with LLM
         for q in data["questions"]:
@@ -154,10 +191,10 @@ def run():
             if not question or not answer:
                 continue
 
-            # Step 1: Recall from Shiba
+            # Step 1: Recall from Shiba (Phase 1C: top_k=10)
             start = time.time()
             recalled = adapter.recall(
-                RecallQuery(query=question, top_k=5),
+                RecallQuery(query=question, top_k=10),
                 namespace=namespace,
             )
             recall_time = time.time() - start

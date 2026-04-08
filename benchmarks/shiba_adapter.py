@@ -93,6 +93,7 @@ class IngestItem:
     document_id: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
     timestamp: str | None = None
+    created_at: str | None = None  # Override created_at for temporal ordering
 
 
 @dataclass
@@ -151,22 +152,41 @@ class ShibaAdapter:
 
             vec = embed(f"{title} {item.content}")
 
-            cur.execute(
-                """INSERT INTO memories (type, title, content, embedding, tags, importance, source, profile, metadata)
-                   VALUES (%s, %s, %s, %s::vector, %s, %s, %s, %s, %s)
-                   ON CONFLICT DO NOTHING""",
-                [
-                    mem_type,
-                    title[:200],
-                    item.content,
-                    pg_vector(vec),
-                    tags,
-                    item.metadata.get("importance", 0.5),
-                    "benchmark",
-                    "global",
-                    json.dumps({"document_id": doc_id, "namespace": namespace, "timestamp": item.timestamp}),
-                ],
-            )
+            # Set confidence based on speaker role (Phase 1A)
+            role = item.metadata.get("role", "unknown")
+            if role == "user":
+                confidence = 0.9
+            elif role == "assistant":
+                confidence = 0.7
+            else:
+                confidence = 0.5
+
+            # Build INSERT with optional created_at override (Phase 2B)
+            if item.created_at:
+                cur.execute(
+                    """INSERT INTO memories (type, title, content, embedding, tags, importance, confidence, source, profile, metadata, created_at)
+                       VALUES (%s, %s, %s, %s::vector, %s, %s, %s, %s, %s, %s, %s)
+                       ON CONFLICT DO NOTHING""",
+                    [
+                        mem_type, title[:200], item.content, pg_vector(vec), tags,
+                        item.metadata.get("importance", 0.5), confidence,
+                        "benchmark", "global",
+                        json.dumps({"document_id": doc_id, "namespace": namespace, "timestamp": item.timestamp}),
+                        item.created_at,
+                    ],
+                )
+            else:
+                cur.execute(
+                    """INSERT INTO memories (type, title, content, embedding, tags, importance, confidence, source, profile, metadata)
+                       VALUES (%s, %s, %s, %s::vector, %s, %s, %s, %s, %s, %s)
+                       ON CONFLICT DO NOTHING""",
+                    [
+                        mem_type, title[:200], item.content, pg_vector(vec), tags,
+                        item.metadata.get("importance", 0.5), confidence,
+                        "benchmark", "global",
+                        json.dumps({"document_id": doc_id, "namespace": namespace, "timestamp": item.timestamp}),
+                    ],
+                )
 
             # Auto-link newly inserted memory
             cur.execute("SELECT id FROM memories WHERE content = %s ORDER BY created_at DESC LIMIT 1", [item.content])
@@ -189,11 +209,12 @@ class ShibaAdapter:
         vec = embed(query.query)
         cur = self.conn.cursor()
 
-        # Use Shiba's scoped_recall function (hybrid semantic + FTS)
+        # Use Shiba's scoped_recall with namespace tag filtering (Phase 1B) + recency boost (Phase 2A)
+        filter_tags = [namespace] if namespace != "default" else None
         cur.execute(
             """SELECT id, type, title, content, metadata, tags, relevance
-               FROM scoped_recall(%s::vector, %s, %s, NULL, NULL, NULL, NULL, 0.7, 0.3)""",
-            [pg_vector(vec), query.query, query.top_k],
+               FROM scoped_recall(%s::vector, %s, %s, NULL, NULL, NULL, %s, 0.7, 0.3, 0.3)""",
+            [pg_vector(vec), query.query, query.top_k, filter_tags],
         )
 
         results = []
@@ -204,9 +225,6 @@ class ShibaAdapter:
                 doc_id = metadata.get("document_id", str(mem_id))
             else:
                 doc_id = str(mem_id)
-
-            if namespace != "default" and tags and namespace not in tags:
-                continue
 
             results.append(RecallResult(
                 document_id=doc_id,
