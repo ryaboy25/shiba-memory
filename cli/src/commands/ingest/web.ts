@@ -14,10 +14,46 @@ function stripHtml(html: string): string {
     .trim();
 }
 
+function validateUrl(url: string): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error(`Invalid URL: ${url}`);
+  }
+
+  // Only allow http/https
+  if (!["http:", "https:"].includes(parsed.protocol)) {
+    throw new Error(`Blocked protocol: ${parsed.protocol}. Only http/https allowed.`);
+  }
+
+  // Block private/internal IPs
+  const hostname = parsed.hostname.toLowerCase();
+  const blocked = [
+    /^localhost$/,
+    /^127\./,
+    /^10\./,
+    /^172\.(1[6-9]|2\d|3[01])\./,
+    /^192\.168\./,
+    /^0\./,
+    /^169\.254\./,   // link-local
+    /^\[::1\]$/,     // IPv6 loopback
+    /^\[fc/,         // IPv6 private
+    /^\[fd/,         // IPv6 private
+    /^metadata\./,   // cloud metadata endpoints
+  ];
+
+  if (blocked.some((r) => r.test(hostname))) {
+    throw new Error(`Blocked host: ${hostname}. Cannot access internal/private addresses.`);
+  }
+}
+
 export async function ingestWeb(
   url: string,
   opts: { dryRun?: boolean; tags?: string[] } = {}
 ): Promise<{ stored: number; skipped: number }> {
+  validateUrl(url);
+
   const sourceId = await registerSource("web", url, url);
 
   const res = await fetch(url);

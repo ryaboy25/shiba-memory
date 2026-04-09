@@ -101,10 +101,17 @@ const UuidParam = z.string().uuid();
 
 // ── Helpers ─────────────────────────────────────────────────
 
+/**
+ * Timing-safe string comparison for API key auth.
+ * When lengths differ, we still perform a timingSafeEqual against a dummy buffer
+ * to consume the same CPU time as a real comparison — preventing timing attacks
+ * from leaking the key length.
+ */
 function safeCompare(a: string, b: string): boolean {
   const bufA = Buffer.from(a);
   const bufB = Buffer.from(b);
   if (bufA.length !== bufB.length) {
+    // Waste time on a dummy comparison to prevent length-based timing leaks
     timingSafeEqual(bufA, Buffer.alloc(bufA.length));
     return false;
   }
