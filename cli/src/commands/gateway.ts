@@ -438,6 +438,56 @@ function createApp() {
     return c.json({ status: "ok", channel: body.channel, sender: body.sender, queued: true });
   });
 
+  // ── Graph Endpoints (Dashboard) ──────────────────────────
+
+  app.get("/graph/nodes", async (c) => {
+    const type = c.req.query("type") || null;
+    const project = c.req.query("project") || null;
+    const minConfidence = parseFloat(c.req.query("min_confidence") || "0");
+    const since = c.req.query("since") || null;
+
+    let sql = `SELECT id, type, title, content, confidence, access_count, importance,
+                      tags, profile, project_path, created_at, temporal_ref
+               FROM memories WHERE 1=1`;
+    const params: unknown[] = [];
+    let idx = 1;
+
+    if (type) { sql += ` AND type = $${idx++}`; params.push(type); }
+    if (project) { sql += ` AND project_path = $${idx++}`; params.push(project); }
+    if (minConfidence > 0) { sql += ` AND confidence >= $${idx++}`; params.push(minConfidence); }
+    if (since) { sql += ` AND created_at >= $${idx++}`; params.push(since); }
+    sql += ` ORDER BY created_at DESC LIMIT 500`;
+
+    const result = await query<{
+      id: string; type: string; title: string; content: string;
+      confidence: number; access_count: number; importance: number;
+      tags: string[]; profile: string; project_path: string | null;
+      created_at: string; temporal_ref: string | null;
+    }>(sql, params);
+
+    return c.json({ status: "ok", count: result.rows.length, nodes: result.rows });
+  });
+
+  app.get("/graph/edges", async (c) => {
+    const result = await query<{
+      source_id: string; target_id: string; relation: string; strength: number; created_at: string;
+    }>(
+      `SELECT source_id, target_id, relation, strength, created_at
+       FROM memory_links
+       ORDER BY created_at DESC
+       LIMIT 2000`
+    );
+
+    const edges = result.rows.map((r) => ({
+      source: r.source_id,
+      target: r.target_id,
+      relation: r.relation,
+      strength: r.strength,
+    }));
+
+    return c.json({ status: "ok", count: edges.length, edges });
+  });
+
   // ── Extraction Endpoints ─────────────────────────────────
 
   const ExtractPatternsSchema = z.object({

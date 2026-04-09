@@ -475,4 +475,22 @@ program
     }));
   }));
 
+// ─── dashboard ─────────────────────────────────────────────
+program
+  .command("dashboard")
+  .description("Launch the Shiba Memory 3D brain dashboard")
+  .option("-p, --port <port>", "Dashboard port", "3001")
+  .action((opts: Record<string, unknown>) => {
+    const { execSync } = require("child_process");
+    const { resolve } = require("path");
+    const dashboardDir = resolve(__dirname, "../../dashboard");
+    const port = opts.port as string;
+    console.log(`Starting Shiba Dashboard on http://localhost:${port}`);
+    try {
+      execSync(`npm run dev -- -p ${port}`, { cwd: dashboardDir, stdio: "inherit" });
+    } catch {
+      console.error("Dashboard failed to start. Run 'cd dashboard && npm install' first.");
+    }
+  });
+
 program.parse();
