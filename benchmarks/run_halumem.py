@@ -58,8 +58,8 @@ def run():
     except Exception as e:
         print(f"  WARNING: LLM not available ({e}). QA scoring will be skipped.")
 
-    print("Loading HaluMem-Medium...")
-    ds = list(load_dataset("IAAR-Shanghai/HaluMem", split="HaluMem-Medium", streaming=True))
+    print("Loading HaluMem...")
+    ds = list(load_dataset("IAAR-Shanghai/HaluMem", split="train", streaming=True))
     print(f"Loaded {len(ds)} users\n")
 
     adapter = ShibaAdapter()
