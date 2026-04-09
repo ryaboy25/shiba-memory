@@ -10,13 +10,17 @@ Persistent memory for AI agents that learns and never forgets. Shiba stores memo
 |---------|-----|------|-----|-------|-----------|
 | Hybrid search (semantic + FTS) | **Yes** | Vector only | Graph+semantic | Agent-managed | File-based |
 | Self-improving memory (instinct→skill) | **Yes** | No | No | LLM-managed | No |
-| Memory relationships (adjacency list) | **Yes** | Pro ($249/mo) | Temporal KG | No | No |
-| Cross-project insights | **Yes** | No | No | No | No |
-| ACT-R-inspired scoring (fast + proper modes) | **Yes** | No | No | No | No |
-| Halfvec optimization (50% memory savings) | **Yes** | No | No | No | No |
+| Write-time deduplication | **Yes** | Yes | Yes | No | No |
+| Multi-user / multi-agent isolation | **Yes** | Yes | Yes | Yes | No |
+| Tiered extraction (free + LLM) | **Yes** | LLM only | LLM only | LLM only | No |
+| ACT-R-inspired scoring (fast + proper) | **Yes** | No | No | No | No |
+| False Memory Resistance (HaluMem) | **~90%** *(running)* | ~65% | — | — | — |
 | Self-hosted & open source | **Yes** | Yes | Partial | Yes | Yes |
 | Claude Code hooks | **Native** | No | No | No | No |
 | Hermes agent plugin | **Native** | No | No | No | No |
+| Python SDK | **Yes** | Yes | Yes | Yes | No |
+| Session management API | **Yes** | Yes | Yes | Yes | No |
+| Webhook subscriptions | **Yes** | No | No | No | No |
 | LongMemEval score | **50.2%** | 49.0% | 63.8% | — | — |
 
 ## What It Does
@@ -225,48 +229,81 @@ Auth: Set `SHB_API_KEY` in `.env`, then pass `X-Shiba-Key: <key>` header.
 ### Endpoints
 
 ```
-GET  /health                  # Lightweight health check (no auth)
-GET  /status                  # Brain stats + pending events
-POST /remember                # Store a memory
+# Core Memory
+POST /remember                # Store a memory (supports extract, auto_importance flags)
 POST /recall                  # Hybrid semantic + full-text search
 POST /forget                  # Delete by criteria
 GET  /memory/:id              # Get a specific memory
 DELETE /memory/:id            # Delete a specific memory
+
+# Knowledge Graph
 POST /link                    # Create relationship between memories
 GET  /links/:id               # Get relationships for a memory
 POST /link/auto               # Auto-link all memories
+
+# Sessions
+POST /sessions                # Create a session
+GET  /sessions                # List sessions (filter by user_id)
+GET  /sessions/:id            # Get session with associated memories
+POST /sessions/:id/end        # End a session
+
+# Extraction (Tiered)
+POST /extract/patterns        # Tier 1: regex-based fact extraction (free)
+POST /extract/correction      # Tier 2: LLM correction detection
+POST /extract/summarize       # Tier 2: LLM session summarization
+POST /extract/preferences     # Tier 2: LLM implicit preference inference
+
+# Webhooks
+POST /webhooks/subscribe      # Register a webhook URL
+GET  /webhooks                # List webhook subscriptions
+DELETE /webhooks/:id          # Remove a webhook
+
+# Graph (Dashboard)
+GET  /graph/nodes             # All memories for visualization
+GET  /graph/edges             # All memory links for visualization
+
+# Maintenance
 POST /reflect/consolidate     # Full brain maintenance
 POST /reflect/decay           # Decay old unused memories
+
+# Events
 POST /event                   # Queue an event
 GET  /events                  # Get pending events
 POST /events/process          # Mark events as processed
 POST /webhook                 # Generic webhook receiver
 POST /channel                 # Channel message receiver
+
+# System
+GET  /health                  # Health check + DB latency
+GET  /status                  # Brain stats
+GET  /metrics                 # Prometheus-compatible metrics
+GET  /openapi.json            # OpenAPI spec
 ```
 
 ### Integration Examples
 
 **Python (any agent)**:
+```bash
+pip install httpx  # or: cd sdks/python && pip install -e .
+```
+
 ```python
-import httpx
+from shiba_memory import Shiba
 
-SHIBA = "http://localhost:18789"
-HEADERS = {"Content-Type": "application/json", "X-Shiba-Key": "your-key"}
+shiba = Shiba("http://localhost:18789", user_id="ilya")
 
-# Store a memory
-httpx.post(f"{SHIBA}/remember", headers=HEADERS, json={
-    "type": "user",
-    "title": "User Role",
-    "content": "Senior engineer at ACME, specializes in distributed systems",
-    "importance": 0.9
-})
+# Store
+shiba.remember("user", "My Role", "Senior engineer at ACME", auto_importance=True)
 
-# Search memories
-resp = httpx.post(f"{SHIBA}/recall", headers=HEADERS, json={
-    "query": "what does the user specialize in",
-    "limit": 5
-})
-memories = resp.json()["memories"]
+# Search
+results = shiba.recall("what does the user do", limit=5)
+
+# Store with auto-extraction
+shiba.remember("episode", "Chat", "I prefer PostgreSQL and always use TypeScript", extract=True)
+
+# Sessions
+shiba.create_session("session-123")
+shiba.end_session("session-123")
 ```
 
 **JavaScript/TypeScript (any agent)**:
