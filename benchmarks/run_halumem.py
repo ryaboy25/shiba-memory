@@ -59,7 +59,20 @@ def run():
         print(f"  WARNING: LLM not available ({e}). QA scoring will be skipped.")
 
     print("Loading HaluMem...")
-    ds = list(load_dataset("IAAR-Shanghai/HaluMem", split="train", streaming=True))
+    # Dataset has complex nested JSON that breaks pyarrow casting
+    # Download raw JSONL directly via huggingface_hub
+    try:
+        from huggingface_hub import hf_hub_download
+        path = hf_hub_download(repo_id="IAAR-Shanghai/HaluMem", filename="HaluMem-Medium.jsonl", repo_type="dataset")
+        ds = []
+        with open(path, "r") as f:
+            for line in f:
+                if line.strip():
+                    ds.append(json.loads(line))
+    except Exception as e:
+        print(f"  Failed to load: {e}")
+        print("  Try: pip install huggingface_hub")
+        return
     print(f"Loaded {len(ds)} users\n")
 
     adapter = ShibaAdapter()
