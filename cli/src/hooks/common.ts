@@ -61,6 +61,7 @@ export interface RecallResult {
   content: string;
   relevance: number;
   tags: string[];
+  created_at?: string;
 }
 
 export async function recall(opts: {

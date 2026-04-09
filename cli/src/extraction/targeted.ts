@@ -155,6 +155,68 @@ export async function extractDecision(
 }
 
 /**
+ * Extract implicit preferences from a conversation.
+ * Looks for behavioral signals: what did the user accept, reject, edit, or repeatedly do?
+ * ~400 tokens. Run at session end for biggest ROI on preference detection.
+ */
+export async function extractPreferences(
+  messages: { role: string; content: string }[],
+): Promise<ExtractionResult> {
+  if (!isLLMAvailable()) return EMPTY;
+
+  // Build a compact transcript focusing on user actions
+  const transcript = messages.slice(-30)
+    .map((m) => `${m.role}: ${m.content.slice(0, 150)}`)
+    .join("\n");
+
+  const chatMessages: ChatMessage[] = [
+    {
+      role: "system",
+      content: `Analyze this conversation and extract implicit user preferences — things the user didn't explicitly say "I prefer X" but revealed through behavior. Look for:
+- What the user accepted vs rejected/edited
+- Patterns in how they want things done (code style, communication style, tool choices)
+- Repeated corrections that imply a preference
+- Technical choices that reveal opinions
+
+Reply as JSON: {"preferences": [{"preference": "...", "evidence": "...", "confidence": 0.0-1.0}]}
+Return an empty array if no clear preferences are detected. Max 5 preferences.`,
+    },
+    {
+      role: "user",
+      content: transcript.slice(0, 2000),
+    },
+  ];
+
+  const response = await llmChat(chatMessages, 400);
+  if (!response) return EMPTY;
+
+  try {
+    const jsonMatch = response.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return EMPTY;
+
+    const parsed = JSON.parse(jsonMatch[0]) as {
+      preferences?: { preference?: string; evidence?: string; confidence?: number }[];
+    };
+
+    if (!parsed.preferences?.length) return EMPTY;
+
+    const facts: ExtractionResult["facts"] = parsed.preferences
+      .filter((p) => p.preference && (p.confidence || 0.5) >= 0.4)
+      .map((p) => ({
+        type: "instinct" as const,
+        title: `Preference: ${(p.preference || "").slice(0, 80)}`,
+        content: `Implicit preference: ${p.preference}. Evidence: ${p.evidence || "behavioral observation"}.`,
+        confidence: Math.min(p.confidence || 0.5, 0.6), // Cap at 0.6 — instincts need confirmation
+        tags: ["preference", "implicit", "tier-2-targeted"],
+      }));
+
+    return { facts, tokens_used: 400 };
+  } catch {
+    return EMPTY;
+  }
+}
+
+/**
  * Summarize a session's key points.
  * ~500 tokens.
  */

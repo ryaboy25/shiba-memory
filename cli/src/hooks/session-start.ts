@@ -86,10 +86,11 @@ safeRun(async () => {
     return true;
   });
 
-  // Output as structured context that Claude Code can consume
-  const lines = unique.map(
-    (m) => `[${m.type}] ${m.title}: ${m.content.slice(0, 200)}`
-  );
+  // Output as structured context with timestamps for temporal reasoning
+  const lines = unique.map((m) => {
+    const date = m.created_at ? ` (${new Date(m.created_at).toLocaleDateString()})` : "";
+    return `[${m.type}]${date} ${m.title}: ${m.content.slice(0, 200)}`;
+  });
 
   console.log(
     `<shiba-context project="${projectName}">\n${lines.join("\n")}\n</shiba-context>`

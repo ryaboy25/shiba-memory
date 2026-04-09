@@ -27,7 +27,9 @@ interface MaterializeOptions {
 
 function formatMemory(m: Memory, includeScore = false): string {
   const score = includeScore ? ` (relevance: ${Number(m.relevance).toFixed(2)})` : "";
-  return `- **${m.title}**: ${m.content.slice(0, 300)}${score}`;
+  // Surface timestamp so LLM can reason about time
+  const date = m.created_at ? ` _(${new Date(m.created_at).toLocaleDateString()})_` : "";
+  return `- **${m.title}**${date}: ${m.content.slice(0, 300)}${score}`;
 }
 
 function formatMemories(memories: Memory[], header: string, description: string): string {

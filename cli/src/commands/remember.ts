@@ -1,7 +1,7 @@
 import { query } from "../db.js";
 import { embed, pgVector } from "../embeddings.js";
 
-const VALID_TYPES = ["user", "feedback", "project", "reference", "episode", "skill"];
+const VALID_TYPES = ["user", "feedback", "project", "reference", "episode", "skill", "instinct"];
 
 export interface RememberOptions {
   type: string;
@@ -13,6 +13,7 @@ export interface RememberOptions {
   expiresIn?: string; // e.g. "30d", "7d", "24h"
   profile?: string;
   projectPath?: string;
+  temporalRef?: string; // ISO date — what time period this memory refers to
 }
 
 function parseExpiry(expr: string): Date {
@@ -35,8 +36,8 @@ export async function remember(opts: RememberOptions): Promise<string> {
   const expiresAt = opts.expiresIn ? parseExpiry(opts.expiresIn) : null;
 
   const result = await query<{ id: string }>(
-    `INSERT INTO memories (type, title, content, embedding, tags, importance, source, expires_at, profile, project_path)
-     VALUES ($1, $2, $3, $4::vector, $5, $6, $7, $8, $9, $10)
+    `INSERT INTO memories (type, title, content, embedding, tags, importance, source, expires_at, profile, project_path, temporal_ref)
+     VALUES ($1, $2, $3, $4::vector, $5, $6, $7, $8, $9, $10, $11)
      RETURNING id`,
     [
       opts.type,
@@ -49,6 +50,7 @@ export async function remember(opts: RememberOptions): Promise<string> {
       expiresAt,
       opts.profile || "global",
       opts.projectPath || null,
+      opts.temporalRef || null,
     ]
   );
 

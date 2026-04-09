@@ -98,6 +98,66 @@ safeRun(async () => {
     }
   }
 
+  // ── Tier 2: Preference inference (if LLM available + enough messages) ──
+  if ((event?.message_count || 0) >= 6) {
+    try {
+      const { isLLMAvailable } = await import("../llm.js");
+      if (isLLMAvailable()) {
+        const episodes = await queryDB<{ content: string }>(
+          `SELECT content FROM memories
+           WHERE type = 'episode'
+             AND tags @> ARRAY['session-event']
+             AND project_path = $1
+           ORDER BY created_at DESC
+           LIMIT 15`,
+          [projectPath]
+        );
+
+        if (episodes.rows.length >= 4) {
+          const { extractPreferences } = await import("../extraction/targeted.js");
+          const messages = episodes.rows.map((r) => ({
+            role: "user" as const,
+            content: r.content,
+          }));
+
+          const result = await extractPreferences(messages);
+          for (const fact of result.facts) {
+            await remember({
+              type: fact.type,
+              title: fact.title,
+              content: fact.content,
+              tags: [...fact.tags, projectName],
+              importance: fact.confidence,
+              source: "hook",
+              profile: "global",
+            });
+          }
+        }
+      }
+    } catch {
+      // Preference inference is optional
+    }
+  }
+
+  // ── Lightweight consolidation: auto-link recent memories ──
+  try {
+    const recentUnlinked = await queryDB<{ id: string }>(
+      `SELECT m.id FROM memories m
+       LEFT JOIN memory_links ml ON m.id = ml.source_id OR m.id = ml.target_id
+       WHERE ml.id IS NULL
+         AND m.embedding IS NOT NULL
+         AND m.project_path = $1
+         AND m.created_at > now() - interval '7 days'
+       LIMIT 10`,
+      [projectPath]
+    );
+    for (const row of recentUnlinked.rows) {
+      await queryDB(`SELECT auto_link_memory($1, 0.7)`, [row.id]);
+    }
+  } catch {
+    // Best-effort
+  }
+
   // ── Regenerate .shiba/ files ──
   try {
     const { materialize } = await import("../commands/materialize.js");

@@ -516,6 +516,29 @@ function createApp() {
     return c.json({ status: "ok", count: result.facts.length, facts: result.facts, tokens_used: result.tokens_used });
   });
 
+  const ExtractPreferencesSchema = z.object({
+    messages: z.array(z.object({ role: z.string(), content: z.string() })).min(1),
+  });
+
+  app.post("/extract/preferences", async (c) => {
+    const body = await parseAndValidate(c, ExtractPreferencesSchema);
+    const { extractPreferences } = await import("../extraction/targeted.js");
+    const result = await extractPreferences(body.messages);
+
+    for (const fact of result.facts) {
+      await remember({
+        type: fact.type,
+        title: fact.title,
+        content: fact.content,
+        tags: fact.tags,
+        importance: fact.confidence,
+        source: "extraction",
+      });
+    }
+
+    return c.json({ status: "ok", count: result.facts.length, facts: result.facts, tokens_used: result.tokens_used });
+  });
+
   // ── Metrics (Prometheus-compatible) ─────────────────────
   app.get("/metrics", async (c) => {
     const stats = await getStats();
