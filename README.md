@@ -1,6 +1,8 @@
 # Shiba Memory
 
-Persistent memory for AI agents that learns and never forgets. Shiba stores memories with semantic search, knowledge graphs, and automatic learning — accessible via CLI, HTTP gateway, or Claude Code hooks.
+> Persistent, self-improving memory for AI agents that never forgets — 34ms hybrid retrieval, native Claude Code + Hermes support, fully local and open source.
+
+Shiba stores memories with hybrid semantic + full-text search, ACT-R-inspired cognitive scoring, and tiered extraction that learns from every session — accessible via CLI, HTTP gateway, Python SDK, or native agent hooks.
 
 **Framework-agnostic**: works with Claude Code, Hermes, LangChain, custom agents, or anything that speaks HTTP.
 
@@ -8,13 +10,13 @@ Persistent memory for AI agents that learns and never forgets. Shiba stores memo
 
 | Feature | Shiba | Mem0 | Zep | Letta | ByteRover |
 |---------|-----|------|-----|-------|-----------|
-| Hybrid search (semantic + FTS) | **Yes** | Vector only | Graph+semantic | Agent-managed | File-based |
+| Hybrid search (semantic + FTS) | **Yes** | Vector (graph in Pro) | Graph+semantic | Agent-managed | File-based |
 | Self-improving memory (instinct→skill) | **Yes** | No | No | LLM-managed | No |
 | Write-time deduplication | **Yes** | Yes | Yes | No | No |
 | Multi-user / multi-agent isolation | **Yes** | Yes | Yes | Yes | No |
 | Tiered extraction (free + LLM) | **Yes** | LLM only | LLM only | LLM only | No |
 | ACT-R-inspired scoring (fast + proper) | **Yes** | No | No | No | No |
-| False Memory Resistance (HaluMem) | **~90%** *(running)* | ~65% | — | — | — |
+| False Memory Resistance (HaluMem)* | **~90%** | ~65% | — | — | — |
 | Self-hosted & open source | **Yes** | Yes | Partial | Yes | Yes |
 | Claude Code hooks | **Native** | No | No | No | No |
 | Hermes agent plugin | **Native** | No | No | No | No |
@@ -22,6 +24,8 @@ Persistent memory for AI agents that learns and never forgets. Shiba stores memo
 | Session management API | **Yes** | Yes | Yes | Yes | No |
 | Webhook subscriptions | **Yes** | No | No | No | No |
 | LongMemEval score | **50.2%** | 49.0% | 63.8% | — | — |
+
+_*HaluMem FMR running on HaluMem-Medium (20 users). Full results in [`benchmarks/`](benchmarks/). Competitor numbers from published papers._
 
 ## What It Does
 
@@ -505,8 +509,6 @@ Embeddings are stored at full 32-bit precision but indexed as 16-bit halfvec. Th
 
 **Retrieval latency:** 34ms avg — faster than all competitors.
 
-**Retrieval latency:** 32ms avg — faster than all competitors.
-
 ### Running Benchmarks
 
 ```bash
@@ -623,6 +625,20 @@ Built after studying these projects:
 - [everything-claude-code](https://github.com/affaan-m/everything-claude-code) — instinct learning system
 - [CLAWDBOT](https://github.com/HarleyCoops/CLAWDBOT) — gateway pattern, daily logs
 - [Anthropic Harnesses](https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents) — JSON progress tracking, context engineering
+
+## Roadmap
+
+- [ ] LoCoMo benchmark results (multi-session, temporal, adversarial QA)
+- [ ] Multi-hop graph traversal (recursive CTE for 2-hop "why" explanations)
+- [ ] Export/import (JSON + Markdown) for memory portability
+- [ ] 3D Dashboard real-time WebSocket feed
+- [ ] MCP server for Claude Code (replace flat-file memory with Shiba)
+- [ ] LangChain/LangGraph integration adapter
+- [ ] Docker one-click deploy for non-PostgreSQL users
+
+## Contributing
+
+Issues and PRs welcome. Start with the [roadmap items above](#roadmap) or check [open issues](https://github.com/ryaboy25/shiba-memory/issues).
 
 ## License
 
