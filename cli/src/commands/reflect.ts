@@ -94,8 +94,26 @@ export async function consolidate(): Promise<ConsolidationResult> {
       insights: 0,
     };
 
-    // Pass 1: Merge near-duplicates
-    const dupes = await findDuplicates();
+    // Pass 1: Merge near-duplicates (query inside transaction for consistency)
+    const dupeResult = await txQuery<{
+      id1: string; id2: string; title1: string; title2: string; similarity: number;
+    }>(
+      `SELECT a.id AS id1, b_match.id AS id2,
+              a.title AS title1, b_match.title AS title2,
+              b_match.similarity
+       FROM memories a,
+       LATERAL (
+         SELECT m.id, m.title,
+                1 - (m.embedding::halfvec(512) <=> a.embedding::halfvec(512)) AS similarity
+         FROM memories m
+         WHERE m.id > a.id AND m.type = a.type AND m.embedding IS NOT NULL
+         ORDER BY m.embedding::halfvec(512) <=> a.embedding::halfvec(512)
+         LIMIT 3
+       ) b_match
+       WHERE a.embedding IS NOT NULL AND b_match.similarity > 0.92
+       ORDER BY b_match.similarity DESC LIMIT 20`
+    );
+    const dupes = dupeResult.rows;
     for (const dupe of dupes) {
       // Fetch both memories in a single query (fix N+1)
       const pair = await txQuery<{ id: string; confidence: number; content: string }>(

@@ -38,18 +38,15 @@ safeRun(async () => {
   await queryDB(
     `UPDATE conversations
      SET summary = COALESCE(summary, '') || $1,
-         decisions = array_append(
-           COALESCE(decisions, '{}'),
-           $2
-         )
+         key_decisions = COALESCE(key_decisions, '[]'::jsonb) || $2::jsonb
      WHERE session_id = $3`,
     [
       `\n[Stop] ${event?.stop_reason || "end_turn"} — ${event?.message_count || 0} messages`,
-      JSON.stringify({
+      JSON.stringify([{
         stop_reason: event?.stop_reason,
         tokens: { input: event?.input_tokens, output: event?.output_tokens },
         timestamp: new Date().toISOString(),
-      }),
+      }]),
       sessionId,
     ]
   );

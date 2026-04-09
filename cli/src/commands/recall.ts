@@ -64,11 +64,14 @@ export async function recall(opts: RecallOptions & { skipTouch?: boolean } = { q
     }).slice(0, opts.limit || 10);
   }
 
-  // Touch all returned memories (update access tracking)
-  if (!opts.skipTouch) {
-    for (const row of rows) {
-      await query(`SELECT touch_memory($1)`, [row.id]);
-    }
+  // Batch-touch all returned memories (single query instead of N+1)
+  if (!opts.skipTouch && rows.length > 0) {
+    const ids = rows.map((r) => r.id);
+    await query(
+      `UPDATE memories SET access_count = access_count + 1, last_accessed_at = now()
+       WHERE id = ANY($1::uuid[])`,
+      [ids]
+    );
   }
 
   return rows;

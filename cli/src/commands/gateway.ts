@@ -815,8 +815,9 @@ function createApp() {
         ...(err.errors ? { errors: err.errors } : {}),
       }, 400);
     }
-    logger.error({ err: err.message, path: c.req.path, method: c.req.method }, "unhandled_error");
-    return c.json({ status: "error", code: "INTERNAL_ERROR", message: err.message }, 500);
+    logger.error({ err: err.message, stack: err.stack, path: c.req.path, method: c.req.method }, "unhandled_error");
+    // Don't leak internal error details to clients
+    return c.json({ status: "error", code: "INTERNAL_ERROR", message: "An internal error occurred" }, 500);
   });
 
   app.notFound((c) => {

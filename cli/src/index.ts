@@ -480,11 +480,13 @@ program
   .command("dashboard")
   .description("Launch the Shiba Memory 3D brain dashboard")
   .option("-p, --port <port>", "Dashboard port", "3001")
-  .action((opts: Record<string, unknown>) => {
-    const { execSync } = require("child_process");
-    const { resolve } = require("path");
-    const dashboardDir = resolve(__dirname, "../../dashboard");
-    const port = opts.port as string;
+  .action(async (opts: Record<string, unknown>) => {
+    const { execSync } = await import("child_process");
+    const { resolve } = await import("path");
+    const { fileURLToPath } = await import("url");
+    const __dir = resolve(fileURLToPath(import.meta.url), "..");
+    const dashboardDir = resolve(__dir, "../../dashboard");
+    const port = String(opts.port).replace(/[^0-9]/g, "") || "3001"; // sanitize port
     console.log(`Starting Shiba Dashboard on http://localhost:${port}`);
     try {
       execSync(`npm run dev -- -p ${port}`, { cwd: dashboardDir, stdio: "inherit" });
