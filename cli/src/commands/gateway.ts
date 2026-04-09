@@ -480,6 +480,101 @@ function createApp() {
     return c.json({ status: "ok", channel: body.channel, sender: body.sender, queued: true });
   });
 
+  // ── Webhook Subscriptions ────────────────────────────────
+
+  const WebhookSubscribeSchema = z.object({
+    url: z.string().url(),
+    events: z.array(z.string()).default(["memory.created", "memory.updated", "memory.deleted"]),
+    secret: z.string().optional(),
+  });
+
+  app.post("/webhooks/subscribe", async (c) => {
+    const body = await parseAndValidate(c, WebhookSubscribeSchema);
+    const result = await query<{ id: number }>(
+      `INSERT INTO webhook_subscriptions (url, events, secret) VALUES ($1, $2, $3) RETURNING id`,
+      [body.url, body.events, body.secret || null]
+    );
+    return c.json({ status: "ok", id: result.rows[0].id });
+  });
+
+  app.get("/webhooks", async (c) => {
+    const result = await query(
+      `SELECT id, url, events, active, created_at FROM webhook_subscriptions ORDER BY created_at DESC`
+    );
+    return c.json({ status: "ok", webhooks: result.rows });
+  });
+
+  app.delete("/webhooks/:id", async (c) => {
+    const id = parseInt(c.req.param("id"));
+    await query(`DELETE FROM webhook_subscriptions WHERE id = $1`, [id]);
+    return c.json({ status: "ok", deleted: true });
+  });
+
+  // ── Session Management ───────────────────────────────────
+
+  const SessionCreateSchema = z.object({
+    session_id: z.string().min(1).max(200),
+    user_id: z.string().max(100).default("default"),
+    agent_id: z.string().max(100).default("default"),
+    project_path: z.string().optional(),
+    metadata: z.record(z.string(), z.unknown()).default({}),
+  });
+
+  app.post("/sessions", async (c) => {
+    const body = await parseAndValidate(c, SessionCreateSchema);
+    const result = await query<{ id: string }>(
+      `INSERT INTO conversations (session_id, user_id, agent_id, project_path, metadata)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (session_id) DO UPDATE SET metadata = conversations.metadata || $5
+       RETURNING id`,
+      [body.session_id, body.user_id, body.agent_id, body.project_path || null, JSON.stringify(body.metadata)]
+    );
+    return c.json({ status: "ok", id: result.rows[0].id, session_id: body.session_id });
+  });
+
+  app.get("/sessions", async (c) => {
+    const userId = c.req.query("user_id") || null;
+    const limit = parseInt(c.req.query("limit") || "20");
+    let sql = `SELECT id, session_id, summary, project_path, user_id, agent_id, started_at, ended_at, metadata
+               FROM conversations WHERE 1=1`;
+    const params: unknown[] = [];
+    if (userId) { sql += ` AND user_id = $1`; params.push(userId); }
+    sql += ` ORDER BY started_at DESC LIMIT ${Math.min(limit, 100)}`;
+    const result = await query(sql, params);
+    return c.json({ status: "ok", count: result.rows.length, sessions: result.rows });
+  });
+
+  app.get("/sessions/:id", async (c) => {
+    const sessionId = c.req.param("id");
+    const conv = await query(
+      `SELECT id, session_id, summary, project_path, user_id, agent_id,
+              started_at, ended_at, files_touched, key_decisions, metadata
+       FROM conversations WHERE session_id = $1`,
+      [sessionId]
+    );
+    if (conv.rows.length === 0) {
+      return c.json({ status: "error", code: "NOT_FOUND", message: "Session not found" }, 404);
+    }
+    // Get memories associated with this session
+    const memories = await query(
+      `SELECT m.id, m.type, m.title, m.created_at FROM memories m
+       JOIN conversation_memories cm ON cm.memory_id = m.id
+       WHERE cm.conversation_id = $1
+       ORDER BY m.created_at DESC LIMIT 50`,
+      [conv.rows[0].id]
+    );
+    return c.json({ status: "ok", session: conv.rows[0], memories: memories.rows });
+  });
+
+  app.post("/sessions/:id/end", async (c) => {
+    const sessionId = c.req.param("id");
+    await query(
+      `UPDATE conversations SET ended_at = now() WHERE session_id = $1`,
+      [sessionId]
+    );
+    return c.json({ status: "ok", session_id: sessionId, ended: true });
+  });
+
   // ── Graph Endpoints (Dashboard) ──────────────────────────
 
   app.get("/graph/nodes", async (c) => {
