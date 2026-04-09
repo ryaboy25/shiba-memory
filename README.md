@@ -16,7 +16,7 @@ Shiba stores memories with hybrid semantic + full-text search, ACT-R-inspired co
 | Multi-user / multi-agent isolation | **Yes** | Yes | Yes | Yes | No |
 | Tiered extraction (free + LLM) | **Yes** | LLM only | LLM only | LLM only | No |
 | ACT-R-inspired scoring (fast + proper) | **Yes** | No | No | No | No |
-| False Memory Resistance (HaluMem)* | **~90%** | ~65% | — | — | — |
+| False Memory Resistance (HaluMem) | **90.7%** | ~65% | — | — | — |
 | Self-hosted & open source | **Yes** | Yes | Partial | Yes | Yes |
 | Claude Code hooks | **Native** | No | No | No | No |
 | Hermes agent plugin | **Native** | No | No | No | No |
@@ -25,7 +25,7 @@ Shiba stores memories with hybrid semantic + full-text search, ACT-R-inspired co
 | Webhook subscriptions | **Yes** | No | No | No | No |
 | LongMemEval score | **50.2%** | 49.0% | 63.8% | — | — |
 
-_*HaluMem FMR running on HaluMem-Medium (20 users). Full results in [`benchmarks/`](benchmarks/). Competitor numbers from published papers._
+_HaluMem-Medium: 20 users, 12,300 memory points, 2,648 interference points. Full results in [`benchmarks/`](benchmarks/)._
 
 ## What It Does
 
