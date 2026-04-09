@@ -122,8 +122,8 @@ def run():
         # Answer QA questions
         qa_list = conv.get("qa", [])
         for qa in qa_list:
-            question = qa.get("question", "")
-            expected = qa.get("answer", "")
+            question = str(qa.get("question", ""))
+            expected = str(qa.get("answer", ""))
             category = qa.get("category", 0)
 
             if not question or not expected:
