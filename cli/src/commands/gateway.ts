@@ -38,6 +38,10 @@ const RememberSchema = z.object({
   expires_in: z.string().max(20).optional(),
   profile: z.string().max(50).optional(),
   project_path: z.string().max(500).optional(),
+  user_id: z.string().max(100).default("default"),
+  agent_id: z.string().max(100).default("default"),
+  extract: z.boolean().default(false), // Auto-extract facts from content before storing
+  auto_importance: z.boolean().default(false), // Auto-estimate importance via LLM/heuristic
 });
 
 const RecallSchema = z.object({
@@ -49,6 +53,8 @@ const RecallSchema = z.object({
   fulltext_weight: z.number().min(0).max(1).optional(),
   profile: z.string().optional(),
   project: z.string().optional(),
+  user_id: z.string().max(100).optional(),
+  agent_id: z.string().max(100).optional(),
 });
 
 const ForgetSchema = z.object({
@@ -241,18 +247,52 @@ function createApp() {
   app.post("/remember", async (c) => {
     const body = await parseAndValidate(c, RememberSchema);
 
+    // Auto-estimate importance if requested
+    let importance = body.importance;
+    if (body.auto_importance) {
+      try {
+        const { estimateImportance } = await import("../extraction/importance.js");
+        importance = await estimateImportance(body.type, body.title, body.content);
+      } catch { /* fall back to provided importance */ }
+    }
+
     const id = await remember({
       type: body.type,
       title: body.title,
       content: body.content,
       tags: body.tags,
-      importance: body.importance,
+      importance,
       source: body.source,
       expiresIn: body.expires_in,
       profile: body.profile,
       projectPath: body.project_path,
+      userId: body.user_id,
+      agentId: body.agent_id,
     });
-    return c.json({ status: "ok", id });
+
+    // Optional: extract additional facts from the content
+    let extracted = 0;
+    if (body.extract) {
+      try {
+        const { extractPatterns } = await import("../extraction/patterns.js");
+        const facts = extractPatterns(body.content, "user");
+        for (const fact of facts) {
+          await remember({
+            type: fact.type,
+            title: fact.title,
+            content: fact.content,
+            tags: [...fact.tags, ...(body.tags || [])],
+            importance: fact.confidence,
+            source: "extraction",
+            userId: body.user_id,
+            agentId: body.agent_id,
+          });
+          extracted++;
+        }
+      } catch { /* extraction is optional */ }
+    }
+
+    return c.json({ status: "ok", id, extracted });
   });
 
   // ── Recall ──────────────────────────────────────────────
@@ -268,6 +308,8 @@ function createApp() {
       fulltextWeight: body.fulltext_weight,
       profile: body.profile,
       project: body.project,
+      userId: body.user_id,
+      agentId: body.agent_id,
     });
     return c.json({ status: "ok", count: results.length, memories: results });
   });
