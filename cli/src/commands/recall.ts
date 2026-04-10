@@ -47,8 +47,8 @@ export async function recall(opts: RecallOptions & { skipTouch?: boolean } = { q
       opts.project || null,
       opts.type || null,
       filterTags,
-      opts.semanticWeight ?? 0.7,
-      opts.fulltextWeight ?? 0.3,
+      opts.semanticWeight ?? 0.5,
+      opts.fulltextWeight ?? 0.5,
     ]
   );
 
