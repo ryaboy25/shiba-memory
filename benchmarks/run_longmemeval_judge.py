@@ -19,7 +19,7 @@ import time
 sys.path.insert(0, ".")
 
 import httpx
-from shiba_adapter import ShibaAdapter, IngestItem, RecallQuery
+from shiba_gateway_adapter import ShibaGatewayAdapter as ShibaAdapter, IngestItem, RecallQuery
 
 LLAMA_ENDPOINT = "http://localhost:8080"
 LLAMA_TIMEOUT = 60
