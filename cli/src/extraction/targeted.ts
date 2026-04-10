@@ -327,12 +327,51 @@ Rules:
     },
   ];
 
-  const response = await llmChat(messages, 400);
+  // Use higher token limit and capture reasoning_content for fact extraction
+  // Gemma often puts the JSON in reasoning, not content
+  let response = await llmChat(messages, 800);
+
+  // If empty, try getting raw reasoning from the LLM provider
+  if (!response) {
+    try {
+      const url = process.env.SHB_LLM_URL || "http://localhost:8080";
+      const res = await fetch(`${url}/v1/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messages, max_tokens: 800, temperature: 0.1 }),
+        signal: AbortSignal.timeout(30000),
+      });
+      if (res.ok) {
+        const data = (await res.json()) as { choices: { message: { content?: string; reasoning_content?: string } }[] };
+        const msg = data.choices[0]?.message;
+        response = (msg?.content || "") + " " + (msg?.reasoning_content || "");
+      }
+    } catch { /* fallback failed */ }
+  }
+
   if (!response) return EMPTY;
 
   try {
-    const jsonMatch = response.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) return EMPTY;
+    // Look for JSON in the response (could be in content or reasoning)
+    const jsonMatch = response.match(/\{[\s\S]*"facts"[\s\S]*\}/);
+    if (!jsonMatch) {
+      // Fallback: parse individual facts from reasoning text like "Fact 1: User owns a dog"
+      const factLines = response.match(/(?:Fact \d+|User's? \w+)[:\-]\s*(.+)/gi);
+      if (factLines && factLines.length > 0) {
+        const facts = factLines.slice(0, 5).map((line) => {
+          const clean = line.replace(/^(?:Fact \d+[:\-]\s*|\*\s*)/i, "").trim();
+          return {
+            type: "user" as const,
+            title: clean.slice(0, 100),
+            content: clean,
+            confidence: 0.7,
+            tags: ["extracted-fact", "tier-2-facts"] as string[],
+          };
+        });
+        return { facts, tokens_used: 800 };
+      }
+      return EMPTY;
+    }
 
     const parsed = JSON.parse(jsonMatch[0]) as {
       facts?: { fact?: string; type?: string; importance?: number }[];
