@@ -35,11 +35,13 @@
 
   // Fetch conversation list
   console.log("📋 Fetching conversation list...");
+  const MAX_CONVERSATIONS = 2000; // Cap to prevent infinite loops and memory issues
   let allConversations = [];
   let cursor = null;
   let page = 0;
+  const seenIds = new Set(); // Dedup to detect pagination loops
 
-  while (true) {
+  while (allConversations.length < MAX_CONVERSATIONS) {
     const url = cursor
       ? `/api/organizations/${orgId}/chat_conversations?limit=50&after=${cursor}`
       : `/api/organizations/${orgId}/chat_conversations?limit=50`;
@@ -54,9 +56,24 @@
 
       if (!data || data.length === 0) break;
 
-      allConversations.push(...data);
+      // Dedup: check if we're seeing conversations we already have (pagination loop)
+      let newCount = 0;
+      for (const conv of data) {
+        if (!seenIds.has(conv.uuid)) {
+          seenIds.add(conv.uuid);
+          allConversations.push(conv);
+          newCount++;
+        }
+      }
+
       page++;
-      console.log(`  Page ${page}: ${data.length} conversations (${allConversations.length} total)`);
+      console.log(`  Page ${page}: ${newCount} new conversations (${allConversations.length} total)`);
+
+      // If no new conversations found, we're looping
+      if (newCount === 0) {
+        console.log("  Detected pagination loop — stopping.");
+        break;
+      }
 
       // Get cursor for next page
       if (data.length < 50) break;
@@ -65,6 +82,10 @@
       console.error("Error fetching conversations:", e);
       break;
     }
+  }
+
+  if (allConversations.length >= MAX_CONVERSATIONS) {
+    console.log(`  Reached ${MAX_CONVERSATIONS} cap. Proceeding with most recent conversations.`);
   }
 
   console.log(`\n📝 Found ${allConversations.length} conversations. Fetching messages...`);
