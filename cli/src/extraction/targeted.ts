@@ -329,38 +329,42 @@ Rules:
 
   // Use higher token limit — Gemma needs room for reasoning + JSON output
   let response = await llmChat(messages, 800);
-
-  // Strip markdown code fences (Gemma wraps JSON in ```json ... ```)
-  if (response) {
-    response = response.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/, "");
-  }
-
-  // If empty, try getting raw reasoning from the LLM provider
-  if (!response) {
-    try {
-      const url = process.env.SHB_LLM_URL || "http://localhost:8080";
-      const res = await fetch(`${url}/v1/chat/completions`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages, max_tokens: 800, temperature: 0.1 }),
-        signal: AbortSignal.timeout(30000),
-      });
-      if (res.ok) {
-        const data = (await res.json()) as { choices: { message: { content?: string; reasoning_content?: string } }[] };
-        const msg = data.choices[0]?.message;
-        response = (msg?.content || "") + " " + (msg?.reasoning_content || "");
-      }
-    } catch { /* fallback failed */ }
-  }
-
   if (!response) return EMPTY;
 
+  // Strip markdown code fences (Gemma wraps JSON in ```json\n...\n```)
+  response = response.replace(/```(?:json)?\s*\n?/gi, "").trim();
+
   try {
-    // Look for JSON in the response (could be in content or reasoning)
-    const jsonMatch = response.match(/\{[\s\S]*"facts"[\s\S]*\}/);
+    // Try to find a JSON object with "facts" array
+    let jsonMatch = response.match(/\{[\s\S]*"facts"\s*:\s*\[[\s\S]*\]/);
+
+    // If no "facts" array, try parsing any JSON object and convert it
     if (!jsonMatch) {
-      // Fallback: parse individual facts from reasoning text like "Fact 1: User owns a dog"
-      const factLines = response.match(/(?:Fact \d+|User's? \w+)[:\-]\s*(.+)/gi);
+      jsonMatch = response.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        try {
+          const raw = JSON.parse(jsonMatch[0]);
+          // Convert flat object like {subject:"dog", age:12} into facts
+          if (!raw.facts && typeof raw === "object") {
+            const facts = Object.entries(raw)
+              .filter(([, v]) => v !== null && v !== undefined)
+              .map(([k, v]) => ({ fact: `User's ${k.replace(/_/g, " ")}: ${v}`, type: "user", importance: 0.7 }));
+            if (facts.length > 0) {
+              const results: ExtractionResult["facts"] = facts.slice(0, 5).map((f) => ({
+                type: "user" as const,
+                title: f.fact.slice(0, 100),
+                content: f.fact,
+                confidence: 0.7,
+                tags: ["extracted-fact", "tier-2-facts"] as string[],
+              }));
+              return { facts: results, tokens_used: 800 };
+            }
+          }
+        } catch { /* not valid JSON */ }
+      }
+
+      // Fallback: parse "Fact N:" lines from reasoning
+      const factLines = response.match(/(?:Fact \d+[:\-]|User'?s? \w+[:\-])\s*.+/gi);
       if (factLines && factLines.length > 0) {
         const facts = factLines.slice(0, 5).map((line) => {
           const clean = line.replace(/^(?:Fact \d+[:\-]\s*|\*\s*)/i, "").trim();
