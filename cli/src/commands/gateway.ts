@@ -154,6 +154,10 @@ async function authMiddleware(c: Context, next: Next) {
 
 async function rateLimitMiddleware(c: Context, next: Next) {
   const ip = c.req.header("x-forwarded-for") || c.req.header("x-real-ip") || "unknown";
+  // Skip rate limiting for localhost/loopback (benchmarks, internal tools)
+  if (ip === "unknown" || ip === "127.0.0.1" || ip === "::1" || ip === "localhost") {
+    return next();
+  }
   if (!checkRateLimit(ip)) {
     logger.warn({ ip, path: c.req.path }, "rate_limited");
     return c.json({ status: "error", code: "RATE_LIMITED", message: "Too many requests" }, 429);
