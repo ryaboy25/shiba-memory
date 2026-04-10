@@ -222,6 +222,16 @@ class ShibaMemoryProvider:
                     except Exception:
                         pass  # Extraction is best-effort
 
+                # Tier 2: Fact extraction from every turn (like Mem0)
+                try:
+                    self._post("/extract/facts", {
+                        "user_message": user_content[:2000],
+                        "assistant_message": assistant_content[:2000],
+                        "user_id": getattr(self, "session_id", "default"),
+                    })
+                except Exception:
+                    pass  # LLM may not be configured
+
                 # Tier 2: Correction detection + extraction
                 correction_signals = ["no,", "no ", "wrong", "actually", "not right", "instead", "fix ", "change "]
                 if any(user_content.lower().strip().startswith(s) for s in correction_signals):

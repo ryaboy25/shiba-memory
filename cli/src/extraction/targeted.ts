@@ -292,6 +292,72 @@ export async function summarizeSession(
 }
 
 /**
+ * Extract structured facts from a conversation turn or exchange.
+ * This is the core extraction that Mem0/Honcho do — turn raw conversation
+ * into searchable factual statements.
+ * ~400 tokens per call.
+ */
+export async function extractFacts(
+  userMessage: string,
+  assistantMessage?: string,
+): Promise<ExtractionResult> {
+  if (!isLLMAvailable()) return EMPTY;
+  if (!userMessage || userMessage.length < 20) return EMPTY;
+
+  const exchange = assistantMessage
+    ? `User: ${userMessage.slice(0, 500)}\nAssistant: ${assistantMessage.slice(0, 500)}`
+    : `User: ${userMessage.slice(0, 800)}`;
+
+  const messages: ChatMessage[] = [
+    {
+      role: "system",
+      content: `Extract factual information about the user from this conversation. Return JSON: {"facts": [{"fact": "...", "type": "user|project|skill", "importance": 0.1-1.0}]}
+
+Rules:
+- Extract ONLY facts about the user, their life, preferences, work, pets, family, health, decisions
+- Each fact should be a short, self-contained statement (under 20 words)
+- Skip generic AI assistant responses — focus on what the USER reveals
+- Skip trivial facts. Focus on things worth remembering long-term
+- Return empty array if no meaningful facts found
+- Max 5 facts per exchange`,
+    },
+    {
+      role: "user",
+      content: exchange,
+    },
+  ];
+
+  const response = await llmChat(messages, 400);
+  if (!response) return EMPTY;
+
+  try {
+    const jsonMatch = response.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return EMPTY;
+
+    const parsed = JSON.parse(jsonMatch[0]) as {
+      facts?: { fact?: string; type?: string; importance?: number }[];
+    };
+
+    if (!parsed.facts?.length) return EMPTY;
+
+    const results: ExtractionResult["facts"] = parsed.facts
+      .filter((f) => f.fact && f.fact.length > 5)
+      .slice(0, 5)
+      .map((f) => ({
+        type: (f.type === "project" ? "project" : f.type === "skill" ? "skill" : "user") as "user" | "project" | "skill",
+        title: f.fact!.slice(0, 100),
+        content: f.fact!,
+        confidence: 0.7,
+        tags: ["extracted-fact", "tier-2-facts"],
+      }));
+
+    return { facts: results, tokens_used: 400 };
+  } catch {
+    return EMPTY;
+  }
+}
+
+/**
  * Determine if a new fact contradicts an existing memory (NLI).
  * ~300 tokens.
  */
