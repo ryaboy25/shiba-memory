@@ -13,6 +13,12 @@
  *   SHB_LLM_RETRIES=1
  */
 
+import dotenv from "dotenv";
+import { fileURLToPath } from "url";
+import { dirname, resolve } from "path";
+const __llmdir = dirname(fileURLToPath(import.meta.url));
+dotenv.config({ path: resolve(__llmdir, "../../.env") });
+
 const PROVIDER = process.env.SHB_LLM_PROVIDER || "none";
 const LLM_URL = process.env.SHB_LLM_URL || "http://localhost:8080";
 const LLM_MODEL = process.env.SHB_LLM_MODEL || "";
