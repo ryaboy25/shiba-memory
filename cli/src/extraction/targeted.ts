@@ -334,6 +334,9 @@ Rules:
   // Strip markdown code fences (Gemma wraps JSON in ```json\n...\n```)
   response = response.replace(/```(?:json)?\s*\n?/gi, "").trim();
 
+  // DEBUG: log what we got
+  console.error(`[extractFacts] response length=${response.length} first100=${response.slice(0, 100)}`);
+
   try {
     // Try to find a JSON object with "facts" array
     let jsonMatch = response.match(/\{[\s\S]*"facts"\s*:\s*\[[\s\S]*\]/);
