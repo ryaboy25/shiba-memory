@@ -334,11 +334,37 @@ Rules:
   // Strip markdown code fences (Gemma wraps JSON in ```json\n...\n```)
   response = response.replace(/```(?:json)?\s*\n?/gi, "").trim();
 
-  // DEBUG: log what we got
-  console.error(`[extractFacts] response length=${response.length} first100=${response.slice(0, 100)}`);
-
   try {
-    // Try to find a JSON object with "facts" array
+    // First try: direct JSON parse (works when model returns clean JSON)
+    // If truncated, try to repair by closing brackets
+    let jsonStr = response;
+    try {
+      JSON.parse(jsonStr);
+    } catch {
+      // Try to repair truncated JSON by closing open brackets
+      if (jsonStr.includes('"facts"')) {
+        if (!jsonStr.endsWith("}")) jsonStr = jsonStr.replace(/,?\s*$/, "") + "]}";
+        if (!jsonStr.endsWith("]}")) jsonStr = jsonStr + "]}";
+      }
+    }
+    try {
+      const direct = JSON.parse(jsonStr);
+      if (direct.facts && Array.isArray(direct.facts)) {
+        const results: ExtractionResult["facts"] = direct.facts
+          .filter((f: { fact?: string }) => f.fact && f.fact.length > 5)
+          .slice(0, 5)
+          .map((f: { fact: string; type?: string }) => ({
+            type: (f.type === "project" ? "project" : f.type === "skill" ? "skill" : "user") as "user" | "project" | "skill",
+            title: f.fact.slice(0, 100),
+            content: f.fact,
+            confidence: 0.7,
+            tags: ["extracted-fact", "tier-2-facts"] as string[],
+          }));
+        return { facts: results, tokens_used: 800 };
+      }
+    } catch { /* not clean JSON, try harder */ }
+
+    // Second try: find JSON with "facts" array
     let jsonMatch = response.match(/\{[\s\S]*"facts"\s*:\s*\[[\s\S]*\]/);
 
     // If no "facts" array, try parsing any JSON object and convert it
