@@ -7,10 +7,41 @@ interface EmbeddingProvider {
   embed(text: string): Promise<number[]>;
 }
 
+/**
+ * Normalize a vector to DIMENSIONS length.
+ * - If vec is the right size, return as-is.
+ * - If vec is too long, truncate and L2-renormalize (not just slice).
+ * - If vec is too short, zero-pad then L2-renormalize to preserve direction.
+ * Previous behavior: zero-pad without renormalization, which biased cosine similarity.
+ */
 function normalizeVec(vec: number[]): number[] {
-  if (vec.length >= DIMENSIONS) return vec.slice(0, DIMENSIONS);
-  return [...vec, ...new Array(DIMENSIONS - vec.length).fill(0)];
+  if (vec.length === DIMENSIONS) return vec;
+
+  let result: number[];
+  if (vec.length > DIMENSIONS) {
+    result = vec.slice(0, DIMENSIONS);
+  } else {
+    result = [...vec, ...new Array(DIMENSIONS - vec.length).fill(0)];
+  }
+
+  // L2-renormalize to preserve direction after truncation/padding
+  const mag = Math.sqrt(result.reduce((s, v) => s + v * v, 0));
+  if (mag > 0) {
+    for (let i = 0; i < result.length; i++) result[i] /= mag;
+  }
+
+  // Warn once if dimensions don't match (likely wrong model configured)
+  if (!normalizeVec._warned && vec.length !== DIMENSIONS) {
+    console.error(
+      `[shiba] WARNING: Embedding model returned ${vec.length} dims, expected ${DIMENSIONS}. ` +
+      `Vectors are being resized + renormalized. For best results, use a ${DIMENSIONS}-dim model.`
+    );
+    normalizeVec._warned = true;
+  }
+
+  return result;
 }
+normalizeVec._warned = false;
 
 const ollama: EmbeddingProvider = {
   async embed(text: string): Promise<number[]> {

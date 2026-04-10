@@ -115,7 +115,8 @@ safeRun(async () => {
     }
     case "Bash": {
       const cmd = event.tool_input?.command || "";
-      if (/^(ls|cat|echo|pwd|cd)(\s|$)/.test(cmd)) return;
+      // Skip read-only / navigational commands (including with flags)
+      if (/^(ls|cat|head|tail|echo|pwd|cd|which|type|file|wc|du|df|whoami|date|env|printenv)(\s|$)/.test(cmd)) return;
       title = `Ran command`;
       content = `Command: ${cmd.slice(0, 200)}`;
       if (event.tool_output) {
@@ -139,16 +140,16 @@ safeRun(async () => {
     projectPath,
   });
 
-  // Update conversation files_touched
+  // Update conversation files_touched (deduplicated — don't append if already present)
   const sessionId = event.session_id || env.sessionId;
   const filePath = event.tool_input?.file_path;
   if (filePath) {
     await queryDB(
       `UPDATE conversations
-       SET files_touched = array_append(
-         COALESCE(files_touched, '{}'),
-         $1
-       )
+       SET files_touched = CASE
+         WHEN $1 = ANY(COALESCE(files_touched, '{}')) THEN files_touched
+         ELSE array_append(COALESCE(files_touched, '{}'), $1)
+       END
        WHERE session_id = $2`,
       [filePath, sessionId]
     );

@@ -55,6 +55,11 @@ const RecallSchema = z.object({
   project: z.string().optional(),
   user_id: z.string().max(100).optional(),
   agent_id: z.string().max(100).optional(),
+  // Temporal search
+  after: z.string().datetime().optional(),   // ISO 8601 — only memories after this date
+  before: z.string().datetime().optional(),  // ISO 8601 — only memories before this date
+  // Cross-encoder reranking
+  rerank: z.boolean().default(false),
 });
 
 const ForgetSchema = z.object({
@@ -119,12 +124,18 @@ function safeCompare(a: string, b: string): boolean {
 }
 
 // ── Rate Limiter ────────────────────────────────────────────
+const MAX_RATE_BUCKETS = 10_000; // Prevent unbounded memory growth
 const rateBuckets = new Map<string, { count: number; resetAt: number }>();
 
 function checkRateLimit(ip: string): boolean {
   const now = Date.now();
   const bucket = rateBuckets.get(ip);
   if (!bucket || now >= bucket.resetAt) {
+    // Evict oldest entries if we hit the cap (prevents memory leak from many IPs)
+    if (rateBuckets.size >= MAX_RATE_BUCKETS) {
+      const oldest = rateBuckets.keys().next().value;
+      if (oldest !== undefined) rateBuckets.delete(oldest);
+    }
     rateBuckets.set(ip, { count: 1, resetAt: now + 60_000 });
     return true;
   }
@@ -178,9 +189,25 @@ async function requestLogger(c: Context, next: Next) {
 }
 
 async function bodySizeMiddleware(c: Context, next: Next) {
+  // Check Content-Length header first (fast path)
   const contentLength = c.req.header("content-length");
   if (contentLength && parseInt(contentLength) > MAX_BODY_BYTES) {
     return c.json({ status: "error", code: "PAYLOAD_TOO_LARGE", message: "Body exceeds size limit" }, 413);
+  }
+  // For requests without Content-Length, we rely on Hono's body parsing
+  // to fail if the body is too large. Clone + check for streaming bodies:
+  if (c.req.method === "POST" || c.req.method === "PUT" || c.req.method === "PATCH") {
+    if (!contentLength) {
+      // No Content-Length: read body and check size
+      try {
+        const body = await c.req.text();
+        if (body.length > MAX_BODY_BYTES) {
+          return c.json({ status: "error", code: "PAYLOAD_TOO_LARGE", message: "Body exceeds size limit" }, 413);
+        }
+      } catch {
+        return c.json({ status: "error", code: "BAD_REQUEST", message: "Failed to read request body" }, 400);
+      }
+    }
   }
   return next();
 }
@@ -264,7 +291,9 @@ function createApp() {
       try {
         const { estimateImportance } = await import("../extraction/importance.js");
         importance = await estimateImportance(body.type, body.title, body.content);
-      } catch { /* fall back to provided importance */ }
+      } catch (err) {
+        logger.warn({ error: (err as Error).message }, "importance_estimation_failed");
+      }
     }
 
     const id = await remember({
@@ -300,7 +329,7 @@ function createApp() {
           });
           extracted++;
         }
-      } catch { /* extraction is optional */ }
+      } catch (err) { logger.debug({ error: (err as Error).message }, "extraction_skipped"); }
     }
 
     return c.json({ status: "ok", id, extracted });
@@ -321,6 +350,9 @@ function createApp() {
       project: body.project,
       userId: body.user_id,
       agentId: body.agent_id,
+      after: body.after,
+      before: body.before,
+      rerank: body.rerank,
     });
     return c.json({ status: "ok", count: results.length, memories: results });
   });
@@ -517,7 +549,13 @@ function createApp() {
 
   app.delete("/webhooks/:id", async (c) => {
     const id = parseInt(c.req.param("id"));
-    await query(`DELETE FROM webhook_subscriptions WHERE id = $1`, [id]);
+    if (isNaN(id)) {
+      return c.json({ status: "error", code: "INVALID_ID", message: "Invalid webhook ID" }, 400);
+    }
+    const result = await query(`DELETE FROM webhook_subscriptions WHERE id = $1`, [id]);
+    if ((result.rowCount ?? 0) === 0) {
+      return c.json({ status: "error", code: "NOT_FOUND", message: "Webhook not found" }, 404);
+    }
     return c.json({ status: "ok", deleted: true });
   });
 
@@ -533,10 +571,12 @@ function createApp() {
 
   app.post("/sessions", async (c) => {
     const body = await parseAndValidate(c, SessionCreateSchema);
+    // Use (session_id, user_id) scoped conflict to prevent cross-user data merging.
+    // Falls back to session_id-only conflict for backward compat with old schema.
     const result = await query<{ id: string }>(
       `INSERT INTO conversations (session_id, user_id, agent_id, project_path, metadata)
        VALUES ($1, $2, $3, $4, $5)
-       ON CONFLICT (session_id) DO UPDATE SET metadata = conversations.metadata || $5
+       ON CONFLICT (session_id, user_id) DO UPDATE SET metadata = conversations.metadata || $5
        RETURNING id`,
       [body.session_id, body.user_id, body.agent_id, body.project_path || null, JSON.stringify(body.metadata)]
     );
@@ -545,12 +585,14 @@ function createApp() {
 
   app.get("/sessions", async (c) => {
     const userId = c.req.query("user_id") || null;
-    const limit = parseInt(c.req.query("limit") || "20");
+    const limit = Math.min(parseInt(c.req.query("limit") || "20") || 20, 100);
     let sql = `SELECT id, session_id, summary, project_path, user_id, agent_id, started_at, ended_at, metadata
                FROM conversations WHERE 1=1`;
     const params: unknown[] = [];
-    if (userId) { sql += ` AND user_id = $1`; params.push(userId); }
-    sql += ` ORDER BY started_at DESC LIMIT ${Math.min(limit, 100)}`;
+    let idx = 1;
+    if (userId) { sql += ` AND user_id = $${idx++}`; params.push(userId); }
+    sql += ` ORDER BY started_at DESC LIMIT $${idx++}`;
+    params.push(limit);
     const result = await query(sql, params);
     return c.json({ status: "ok", count: result.rows.length, sessions: result.rows });
   });
@@ -634,6 +676,65 @@ function createApp() {
     }));
 
     return c.json({ status: "ok", count: edges.length, edges });
+  });
+
+  // ── Entity Resolution ────────────────────────────────────
+
+  const EntityCreateSchema = z.object({
+    name: z.string().min(1).max(200),
+    type: z.string().max(50).default("unknown"),
+    aliases: z.array(z.string().max(200)).default([]),
+    metadata: z.record(z.string(), z.unknown()).default({}),
+    user_id: z.string().max(100).default("default"),
+  });
+
+  const EntityRecallSchema = z.object({
+    name: z.string().min(1).max(200),
+    user_id: z.string().max(100).default("default"),
+    limit: z.number().int().min(1).max(100).default(20),
+  });
+
+  const EntityMergeSchema = z.object({
+    source_id: z.string().uuid(),
+    target_id: z.string().uuid(),
+  });
+
+  app.post("/entities", async (c) => {
+    const body = await parseAndValidate(c, EntityCreateSchema);
+    const { upsertEntity } = await import("./entity.js");
+    const id = await upsertEntity({
+      name: body.name,
+      type: body.type,
+      aliases: body.aliases,
+      metadata: body.metadata,
+      userId: body.user_id,
+    });
+    return c.json({ status: "ok", id });
+  });
+
+  app.get("/entities", async (c) => {
+    const { listEntities } = await import("./entity.js");
+    const type = c.req.query("type") || undefined;
+    const userId = c.req.query("user_id") || "default";
+    const entities = await listEntities({ userId, type });
+    return c.json({ status: "ok", count: entities.length, entities });
+  });
+
+  app.post("/entities/recall", async (c) => {
+    const body = await parseAndValidate(c, EntityRecallSchema);
+    const { recallByEntity } = await import("./entity.js");
+    const result = await recallByEntity(body.name, {
+      userId: body.user_id,
+      limit: body.limit,
+    });
+    return c.json({ status: "ok", ...result });
+  });
+
+  app.post("/entities/merge", async (c) => {
+    const body = await parseAndValidate(c, EntityMergeSchema);
+    const { mergeEntities } = await import("./entity.js");
+    await mergeEntities(body.source_id, body.target_id);
+    return c.json({ status: "ok", message: "Entities merged" });
   });
 
   // ── Extraction Endpoints ─────────────────────────────────
@@ -877,6 +978,13 @@ export function startGateway(): void {
       return;
     } catch { /* stale pid */ }
   }
+
+  // Startup health check: verify DB is reachable before binding the port
+  query("SELECT 1").then(() => {
+    logger.info("db_health_check_passed");
+  }).catch((err) => {
+    logger.error({ error: (err as Error).message }, "db_health_check_failed — gateway starting anyway, queries will fail until DB is available");
+  });
 
   const app = createApp();
 

@@ -14,7 +14,32 @@ function stripHtml(html: string): string {
     .trim();
 }
 
-function validateUrl(url: string): void {
+/**
+ * Check if a resolved IP address is private/internal.
+ * Covers: loopback, private ranges, link-local, cloud metadata, IPv6-mapped IPv4.
+ */
+function isPrivateIP(ip: string): boolean {
+  // Strip IPv6-mapped IPv4 prefix (::ffff:127.0.0.1 → 127.0.0.1)
+  const normalized = ip.replace(/^::ffff:/i, "");
+
+  const blocked = [
+    /^127\./,                       // loopback
+    /^10\./,                        // RFC 1918
+    /^172\.(1[6-9]|2\d|3[01])\./,  // RFC 1918
+    /^192\.168\./,                  // RFC 1918
+    /^0\./,                         // this network
+    /^169\.254\./,                  // link-local / AWS metadata
+    /^100\.(6[4-9]|[7-9]\d|1[0-2]\d)\./,  // CGN (RFC 6598)
+    /^::1$/,                        // IPv6 loopback
+    /^fe80:/i,                      // IPv6 link-local
+    /^fc/i,                         // IPv6 ULA
+    /^fd/i,                         // IPv6 ULA
+  ];
+
+  return blocked.some((r) => r.test(normalized));
+}
+
+async function validateUrl(url: string): Promise<void> {
   let parsed: URL;
   try {
     parsed = new URL(url);
@@ -27,24 +52,40 @@ function validateUrl(url: string): void {
     throw new Error(`Blocked protocol: ${parsed.protocol}. Only http/https allowed.`);
   }
 
-  // Block private/internal IPs
+  // Block obviously private hostnames
   const hostname = parsed.hostname.toLowerCase();
-  const blocked = [
+  const blockedHosts = [
     /^localhost$/,
-    /^127\./,
-    /^10\./,
-    /^172\.(1[6-9]|2\d|3[01])\./,
-    /^192\.168\./,
-    /^0\./,
-    /^169\.254\./,   // link-local
-    /^\[::1\]$/,     // IPv6 loopback
-    /^\[fc/,         // IPv6 private
-    /^\[fd/,         // IPv6 private
-    /^metadata\./,   // cloud metadata endpoints
+    /^metadata\./,
+    /^metadata$/,
+    /^169\.254\.169\.254$/,   // AWS/GCP metadata
+    /^100\.100\.100\.200$/,   // Alibaba metadata
   ];
 
-  if (blocked.some((r) => r.test(hostname))) {
+  if (blockedHosts.some((r) => r.test(hostname))) {
     throw new Error(`Blocked host: ${hostname}. Cannot access internal/private addresses.`);
+  }
+
+  // DNS resolution check: resolve hostname and verify the IP isn't private.
+  // This prevents DNS rebinding attacks where a hostname initially resolves
+  // to a public IP but later resolves to a private one.
+  try {
+    const { resolve4, resolve6 } = await import("dns/promises");
+    const ips: string[] = [];
+    try { ips.push(...await resolve4(hostname)); } catch { /* no A records */ }
+    try { ips.push(...await resolve6(hostname)); } catch { /* no AAAA records */ }
+
+    for (const ip of ips) {
+      if (isPrivateIP(ip)) {
+        throw new Error(`Blocked host: ${hostname} resolves to private IP ${ip}.`);
+      }
+    }
+  } catch (e) {
+    if ((e as Error).message.includes("Blocked host")) throw e;
+    // DNS resolution failed — allow raw IPs but check them directly
+    if (isPrivateIP(hostname.replace(/^\[|\]$/g, ""))) {
+      throw new Error(`Blocked host: ${hostname}. Cannot access internal/private addresses.`);
+    }
   }
 }
 
@@ -52,11 +93,14 @@ export async function ingestWeb(
   url: string,
   opts: { dryRun?: boolean; tags?: string[] } = {}
 ): Promise<{ stored: number; skipped: number }> {
-  validateUrl(url);
+  await validateUrl(url);
 
   const sourceId = await registerSource("web", url, url);
 
-  const res = await fetch(url);
+  const res = await fetch(url, {
+    signal: AbortSignal.timeout(30_000), // 30s timeout — prevents slow-drip DoS
+    headers: { "User-Agent": "shiba-memory/0.1 (+https://github.com/ryaboy25/shiba-memory)" },
+  });
   if (!res.ok) throw new Error(`Failed to fetch ${url}: ${res.status}`);
 
   const html = await res.text();

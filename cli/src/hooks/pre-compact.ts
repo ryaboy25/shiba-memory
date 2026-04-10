@@ -38,12 +38,13 @@ safeRun(async () => {
   const sessionId = event?.session_id || env.sessionId;
 
   // Fetch current conversation state
+  // NOTE: column is key_decisions (not "decisions") — was causing silent data loss.
   const conv = await queryDB<{
     summary: string | null;
-    decisions: string[] | null;
+    key_decisions: unknown[] | null;
     files_touched: string[] | null;
   }>(
-    `SELECT summary, decisions, files_touched
+    `SELECT summary, key_decisions, files_touched
      FROM conversations
      WHERE session_id = $1`,
     [sessionId]
@@ -51,7 +52,7 @@ safeRun(async () => {
 
   if (!conv.rows[0]) return;
 
-  const { summary, decisions, files_touched } = conv.rows[0];
+  const { summary, key_decisions: decisions, files_touched } = conv.rows[0];
 
   // If we have accumulated decisions, store them as a session snapshot
   if (decisions && decisions.length > 0) {

@@ -92,7 +92,10 @@ safeRun(async () => {
     return `[${m.type}]${date} ${m.title}: ${m.content.slice(0, 200)}`;
   });
 
+  // Escape XML special chars in project name to prevent injection
+  const safeProject = projectName.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
   console.log(
-    `<shiba-context project="${projectName}">\n${lines.join("\n")}\n</shiba-context>`
+    `<shiba-context project="${safeProject}">\n${lines.join("\n")}\n</shiba-context>`
   );
 });

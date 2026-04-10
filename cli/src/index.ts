@@ -475,6 +475,72 @@ program
     }));
   }));
 
+// ─── entity ───────────────────────────────────────────────
+const entityCmd = program
+  .command("entity")
+  .description("Entity resolution — track people, pets, orgs, and concepts across memories");
+
+entityCmd
+  .command("create")
+  .description("Create or update an entity")
+  .argument("<name>", "Canonical name")
+  .option("-t, --type <type>", "Entity type: person, pet, org, place, tool, concept", "unknown")
+  .option("--aliases <aliases...>", "Alternative names/references")
+  .action(action(async (name: string, opts: Record<string, unknown>) => {
+    const { upsertEntity } = await import("./commands/entity.js");
+    const id = await upsertEntity({
+      name,
+      type: opts.type as string,
+      aliases: opts.aliases as string[] | undefined,
+    });
+    console.log(JSON.stringify({ status: "ok", id }));
+  }));
+
+entityCmd
+  .command("list")
+  .description("List all known entities")
+  .option("-t, --type <type>", "Filter by entity type")
+  .action(action(async (opts: Record<string, unknown>) => {
+    const { listEntities } = await import("./commands/entity.js");
+    const entities = await listEntities({ type: opts.type as string | undefined });
+    console.log(JSON.stringify({ status: "ok", count: entities.length, entities }));
+  }));
+
+entityCmd
+  .command("recall")
+  .description("Find all memories about a specific entity")
+  .argument("<name>", "Entity name or alias")
+  .option("-n, --limit <n>", "Max results", parseInt, 20)
+  .action(action(async (name: string, opts: Record<string, unknown>) => {
+    const { recallByEntity } = await import("./commands/entity.js");
+    const result = await recallByEntity(name, { limit: opts.limit as number });
+    console.log(JSON.stringify({ status: "ok", ...result }));
+  }));
+
+entityCmd
+  .command("merge")
+  .description("Merge two entities (source → target)")
+  .argument("<source>", "Source entity UUID (will be deleted)")
+  .argument("<target>", "Target entity UUID (will absorb aliases)")
+  .action(action(async (source: string, target: string) => {
+    const { mergeEntities } = await import("./commands/entity.js");
+    await mergeEntities(source, target);
+    console.log(JSON.stringify({ status: "ok", message: `Merged ${source} into ${target}` }));
+  }));
+
+// ─── mcp ──────────────────────────────────────────────────
+const mcpCmd = program
+  .command("mcp")
+  .description("MCP (Model Context Protocol) server for AI agent integrations");
+
+mcpCmd
+  .command("start")
+  .description("Start MCP server on stdio (connect from Claude Desktop, Cursor, etc.)")
+  .action(async () => {
+    const { startMCPServer } = await import("./commands/mcp.js");
+    startMCPServer();
+  });
+
 // ─── dashboard ─────────────────────────────────────────────
 program
   .command("dashboard")
