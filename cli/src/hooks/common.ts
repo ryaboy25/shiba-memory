@@ -132,13 +132,25 @@ export function getHookEnv() {
 }
 
 export async function readStdin(): Promise<string> {
+  if (process.stdin.isTTY) return "";
+
   return new Promise((resolve) => {
     let data = "";
+    let resolved = false;
+
+    const done = () => {
+      if (resolved) return;
+      resolved = true;
+      resolve(data);
+    };
+
     process.stdin.setEncoding("utf-8");
     process.stdin.on("data", (chunk) => (data += chunk));
-    process.stdin.on("end", () => resolve(data));
-    if (process.stdin.isTTY) resolve("");
-    setTimeout(() => resolve(data), 500);
+    process.stdin.on("end", done);
+    process.stdin.on("error", done);
+
+    // Safety timeout — hooks have a 5s limit, give stdin 2s max
+    setTimeout(done, 2000);
   });
 }
 
