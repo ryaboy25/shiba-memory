@@ -97,27 +97,65 @@ def run():
         session_keys = sorted([k for k in conversation.keys() if k.startswith("session_")],
                               key=lambda x: int(x.split("_")[1]) if x.split("_")[1].isdigit() else 0)
 
-        # Ingest all sessions
+        # Ingest all sessions — store individual turns + session summaries + round pairs
+        speaker_a = conversation.get("speaker_a", "Speaker A")
+        speaker_b = conversation.get("speaker_b", "Speaker B")
+
         for sess_key in session_keys:
             session = conversation[sess_key]
             if not isinstance(session, list):
                 continue
+
+            session_texts = []
+            # Store individual turns
             for turn in session:
                 if isinstance(turn, dict):
                     text = turn.get("text", turn.get("content", ""))
                     speaker = turn.get("speaker", turn.get("role", "unknown"))
                     if text:
+                        full_text = f"[{speaker}] {text}"
+                        session_texts.append(full_text)
                         adapter.ingest(
                             [IngestItem(
-                                content=f"[{speaker}] {text}",
+                                content=full_text,
                                 metadata={
                                     "title": f"{sess_key} - {speaker}",
                                     "type": "episode",
-                                    "role": "user" if "1" in speaker else "assistant",
+                                    "role": "user",
                                 },
                             )],
                             namespace=namespace,
                         )
+
+            # Store consecutive turn pairs (round-level context for multi-hop)
+            for i in range(0, len(session_texts) - 1, 2):
+                pair = session_texts[i] + "\n" + session_texts[i + 1] if i + 1 < len(session_texts) else session_texts[i]
+                adapter.ingest(
+                    [IngestItem(
+                        content=pair,
+                        metadata={
+                            "title": f"{sess_key} round {i//2 + 1}",
+                            "type": "episode",
+                            "importance": 0.6,
+                        },
+                    )],
+                    namespace=namespace,
+                )
+
+            # Store session summary
+            if session_texts:
+                summary = " ".join(session_texts)[:800]
+                adapter.ingest(
+                    [IngestItem(
+                        content=f"[Session {sess_key} summary] {summary}",
+                        metadata={
+                            "title": f"{sess_key} summary",
+                            "type": "episode",
+                            "importance": 0.7,
+                        },
+                    )],
+                    namespace=namespace,
+                )
 
         # Answer QA questions
         qa_list = conv.get("qa", [])
