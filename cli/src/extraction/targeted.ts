@@ -327,9 +327,13 @@ Rules:
     },
   ];
 
-  // Use higher token limit and capture reasoning_content for fact extraction
-  // Gemma often puts the JSON in reasoning, not content
+  // Use higher token limit — Gemma needs room for reasoning + JSON output
   let response = await llmChat(messages, 800);
+
+  // Strip markdown code fences (Gemma wraps JSON in ```json ... ```)
+  if (response) {
+    response = response.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/, "");
+  }
 
   // If empty, try getting raw reasoning from the LLM provider
   if (!response) {
