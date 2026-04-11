@@ -5,10 +5,10 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 from sentence_transformers import SentenceTransformer
 
-DEVICE = f"cuda:{os.getenv('CUDA_DEVICE', '0')}"
 MODEL_ID = os.getenv("EMBED_MODEL", "mixedbread-ai/mxbai-embed-large-v1")
+DEVICE = "cuda:0" if torch.cuda.is_available() else "cpu"
 
-print(f"Loading {MODEL_ID} on {DEVICE}...")
+print(f"Loading {MODEL_ID} on {DEVICE} (visible GPUs: {os.getenv('CUDA_VISIBLE_DEVICES', 'all')})...")
 model = SentenceTransformer(MODEL_ID, device=DEVICE)
 print(f"Ready! Embedding dim: {model.get_sentence_embedding_dimension()}")
 
