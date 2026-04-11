@@ -65,8 +65,8 @@ export async function remember(opts: RememberOptions): Promise<string> {
          WHERE embedding IS NOT NULL
            AND type = $1
            AND user_id = $2
-           AND 1 - (embedding::halfvec(512) <=> $3::vector::halfvec(512)) > $4
-         ORDER BY embedding::halfvec(512) <=> $3::vector::halfvec(512)
+           AND 1 - (embedding::halfvec(1024) <=> $3::vector::halfvec(1024)) > $4
+         ORDER BY embedding::halfvec(1024) <=> $3::vector::halfvec(1024)
          LIMIT 1`,
         [opts.type, opts.userId || "default", pgVector(vec), DEDUP_THRESHOLD]
       );

@@ -54,12 +54,12 @@ export async function findDuplicates(): Promise<
      FROM memories a,
      LATERAL (
        SELECT m.id, m.title,
-              1 - (m.embedding::halfvec(512) <=> a.embedding::halfvec(512)) AS similarity
+              1 - (m.embedding::halfvec(1024) <=> a.embedding::halfvec(1024)) AS similarity
        FROM memories m
        WHERE m.id > a.id
          AND m.type = a.type
          AND m.embedding IS NOT NULL
-       ORDER BY m.embedding::halfvec(512) <=> a.embedding::halfvec(512)
+       ORDER BY m.embedding::halfvec(1024) <=> a.embedding::halfvec(1024)
        LIMIT 3
      ) b_match
      WHERE a.embedding IS NOT NULL
@@ -99,10 +99,10 @@ async function passMergeDuplicates(): Promise<number> {
        FROM memories a,
        LATERAL (
          SELECT m.id, m.title,
-                1 - (m.embedding::halfvec(512) <=> a.embedding::halfvec(512)) AS similarity
+                1 - (m.embedding::halfvec(1024) <=> a.embedding::halfvec(1024)) AS similarity
          FROM memories m
          WHERE m.id > a.id AND m.type = a.type AND m.embedding IS NOT NULL
-         ORDER BY m.embedding::halfvec(512) <=> a.embedding::halfvec(512)
+         ORDER BY m.embedding::halfvec(1024) <=> a.embedding::halfvec(1024)
          LIMIT 3
        ) b_match
        WHERE a.embedding IS NOT NULL AND b_match.similarity > 0.92

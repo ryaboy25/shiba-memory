@@ -1,5 +1,5 @@
 const PROVIDER = process.env.SHB_EMBEDDING_PROVIDER || "ollama";
-const DIMENSIONS = 512;
+const DIMENSIONS = parseInt(process.env.SHB_EMBED_DIMENSIONS || "1024");
 const EMBED_TIMEOUT = parseInt(process.env.SHB_EMBED_TIMEOUT_MS || "10000");
 const EMBED_RETRIES = parseInt(process.env.SHB_EMBED_RETRIES || "2");
 

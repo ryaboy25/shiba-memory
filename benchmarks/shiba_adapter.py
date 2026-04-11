@@ -43,7 +43,7 @@ OLLAMA_URL = os.getenv("SHB_OLLAMA_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("SHB_OLLAMA_MODEL", "nomic-embed-text")
 OPENAI_API_KEY = os.getenv("SHB_OPENAI_API_KEY", "")
 OPENAI_MODEL = os.getenv("SHB_OPENAI_MODEL", "text-embedding-3-small")
-DIMENSIONS = 512
+DIMENSIONS = int(os.getenv("SHB_EMBED_DIMENSIONS", "1024"))
 
 
 # ── Embedding ───────────────────────────────────────────────────
