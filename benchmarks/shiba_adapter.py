@@ -84,7 +84,7 @@ def _normalize(vec: list[float]) -> list[float]:
     return [v / mag for v in vec]
 
 
-MAX_EMBED_CHARS = 1500  # ~375 tokens, safe for 512-token context models
+MAX_EMBED_CHARS = 1000  # ~250 tokens, safe for mxbai-embed-large's 512-token context
 
 def embed(text: str) -> list[float]:
     if not text or not text.strip():
