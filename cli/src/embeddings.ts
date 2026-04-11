@@ -51,7 +51,7 @@ const ollama: EmbeddingProvider = {
     const res = await fetch(`${url}/api/embed`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model, input: text }),
+      body: JSON.stringify({ model, input: text, options: { num_ctx: 2048 } }),
       signal: AbortSignal.timeout(EMBED_TIMEOUT),
     });
 
@@ -109,15 +109,12 @@ const hashtest: EmbeddingProvider = {
 
 const providers: Record<string, EmbeddingProvider> = { ollama, openai, hashtest };
 
-const MAX_EMBED_CHARS = 1000; // ~250 tokens, safe for mxbai-embed-large's 512-token context
-
 /** Embed with retry and exponential backoff. */
 export async function embed(text: string): Promise<number[]> {
   const provider = providers[PROVIDER];
   if (!provider) throw new Error(`Unknown embedding provider: ${PROVIDER}`);
 
   if (!text || !text.trim()) return new Array(DIMENSIONS).fill(0);
-  if (text.length > MAX_EMBED_CHARS) text = text.slice(0, MAX_EMBED_CHARS);
 
   let lastError: Error | null = null;
   for (let attempt = 0; attempt <= EMBED_RETRIES; attempt++) {

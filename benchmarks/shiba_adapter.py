@@ -53,7 +53,7 @@ def _embed_ollama(text: str, retries: int = 2) -> list[float]:
         try:
             resp = httpx.post(
                 f"{OLLAMA_URL}/api/embed",
-                json={"model": OLLAMA_MODEL, "input": text},
+                json={"model": OLLAMA_MODEL, "input": text, "options": {"num_ctx": 2048}},
                 timeout=60,
             )
             resp.raise_for_status()
@@ -84,13 +84,9 @@ def _normalize(vec: list[float]) -> list[float]:
     return [v / mag for v in vec]
 
 
-MAX_EMBED_CHARS = 1000  # ~250 tokens, safe for mxbai-embed-large's 512-token context
-
 def embed(text: str) -> list[float]:
     if not text or not text.strip():
         return [0.0] * DIMENSIONS
-    if len(text) > MAX_EMBED_CHARS:
-        text = text[:MAX_EMBED_CHARS]
     if EMBEDDING_PROVIDER == "openai":
         return _embed_openai(text)
     return _embed_ollama(text)
