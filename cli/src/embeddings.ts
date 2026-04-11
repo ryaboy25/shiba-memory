@@ -51,7 +51,7 @@ const ollama: EmbeddingProvider = {
     const res = await fetch(`${url}/api/embed`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model, input: text, options: { num_ctx: 2048 } }),
+      body: JSON.stringify({ model, input: text, options: { num_ctx: 8192 } }),
       signal: AbortSignal.timeout(EMBED_TIMEOUT),
     });
 

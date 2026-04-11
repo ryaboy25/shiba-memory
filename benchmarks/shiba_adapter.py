@@ -53,7 +53,7 @@ def _embed_ollama(text: str, retries: int = 2) -> list[float]:
         try:
             resp = httpx.post(
                 f"{OLLAMA_URL}/api/embed",
-                json={"model": OLLAMA_MODEL, "input": text, "options": {"num_ctx": 2048}},
+                json={"model": OLLAMA_MODEL, "input": text, "options": {"num_ctx": 8192}},
                 timeout=60,
             )
             resp.raise_for_status()
