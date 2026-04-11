@@ -115,6 +115,8 @@ export async function embed(text: string): Promise<number[]> {
   if (!provider) throw new Error(`Unknown embedding provider: ${PROVIDER}`);
 
   if (!text || !text.trim()) return new Array(DIMENSIONS).fill(0);
+  // mxbai-embed-large has 512-token hard limit; FTS + substring channels cover full content
+  if (text.length > 1400) text = text.slice(0, 1400);
 
   let lastError: Error | null = null;
   for (let attempt = 0; attempt <= EMBED_RETRIES; attempt++) {

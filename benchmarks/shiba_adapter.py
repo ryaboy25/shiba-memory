@@ -60,12 +60,15 @@ def _embed_ollama(text: str, retries: int = 2) -> list[float]:
             vec = resp.json()["embeddings"][0]
             return _normalize(vec[:DIMENSIONS] if len(vec) >= DIMENSIONS else vec + [0.0] * (DIMENSIONS - len(vec)))
         except httpx.HTTPStatusError as e:
+            if e.response.status_code == 400 and "context length" in e.response.text:
+                # Token limit hit — progressively shorten and retry
+                text = text[:len(text) * 3 // 4]
+                if len(text) < 50:
+                    return [0.0] * DIMENSIONS
+                continue
             if attempt < retries:
                 time.sleep(2 ** attempt)
                 continue
-            print(f"Ollama 400 response body: {e.response.text}")
-            print(f"Model used: {OLLAMA_MODEL}")
-            print(f"Input text length: {len(text)}, first 100 chars: {text[:100]!r}")
             raise
 
 
@@ -88,6 +91,9 @@ def _normalize(vec: list[float]) -> list[float]:
 def embed(text: str) -> list[float]:
     if not text or not text.strip():
         return [0.0] * DIMENSIONS
+    # mxbai-embed-large has 512-token hard limit; pre-truncate long texts
+    if len(text) > 1500:
+        text = text[:1500]
     if EMBEDDING_PROVIDER == "openai":
         return _embed_openai(text)
     return _embed_ollama(text)
