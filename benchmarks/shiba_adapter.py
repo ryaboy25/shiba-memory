@@ -41,6 +41,7 @@ DB_CONFIG = {
 EMBEDDING_PROVIDER = os.getenv("SHB_EMBEDDING_PROVIDER", "ollama")
 OLLAMA_URL = os.getenv("SHB_OLLAMA_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("SHB_OLLAMA_MODEL", "nomic-embed-text")
+TEI_URL = os.getenv("SHB_TEI_URL", "http://localhost:8080")
 OPENAI_API_KEY = os.getenv("SHB_OPENAI_API_KEY", "")
 OPENAI_MODEL = os.getenv("SHB_OPENAI_MODEL", "text-embedding-3-small")
 DIMENSIONS = int(os.getenv("SHB_EMBED_DIMENSIONS", "1024"))
@@ -72,6 +73,17 @@ def _embed_ollama(text: str, retries: int = 2) -> list[float]:
             raise
 
 
+def _embed_tei(text: str) -> list[float]:
+    resp = httpx.post(
+        f"{TEI_URL}/embed",
+        json={"inputs": text, "truncate": True},
+        timeout=30,
+    )
+    resp.raise_for_status()
+    vec = resp.json()[0]
+    return _normalize(vec[:DIMENSIONS] if len(vec) >= DIMENSIONS else vec + [0.0] * (DIMENSIONS - len(vec)))
+
+
 def _embed_openai(text: str) -> list[float]:
     resp = httpx.post(
         "https://api.openai.com/v1/embeddings",
@@ -91,11 +103,13 @@ def _normalize(vec: list[float]) -> list[float]:
 def embed(text: str) -> list[float]:
     if not text or not text.strip():
         return [0.0] * DIMENSIONS
-    # mxbai-embed-large has 512-token hard limit; pre-truncate long texts
-    if len(text) > 1500:
-        text = text[:1500]
+    if EMBEDDING_PROVIDER == "tei":
+        return _embed_tei(text)
     if EMBEDDING_PROVIDER == "openai":
         return _embed_openai(text)
+    # Ollama: mxbai-embed-large has 512-token hard limit; pre-truncate
+    if len(text) > 1500:
+        text = text[:1500]
     return _embed_ollama(text)
 
 

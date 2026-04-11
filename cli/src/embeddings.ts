@@ -107,7 +107,27 @@ const hashtest: EmbeddingProvider = {
   },
 };
 
-const providers: Record<string, EmbeddingProvider> = { ollama, openai, hashtest };
+const tei: EmbeddingProvider = {
+  async embed(text: string): Promise<number[]> {
+    const url = process.env.SHB_TEI_URL || "http://localhost:8080";
+
+    const res = await fetch(`${url}/embed`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ inputs: text, truncate: true }),
+      signal: AbortSignal.timeout(EMBED_TIMEOUT),
+    });
+
+    if (!res.ok) {
+      throw new Error(`TEI embed failed (${res.status}): ${await res.text()}`);
+    }
+
+    const data = (await res.json()) as number[][];
+    return normalizeVec(data[0]);
+  },
+};
+
+const providers: Record<string, EmbeddingProvider> = { ollama, openai, tei, hashtest };
 
 /** Embed with retry and exponential backoff. */
 export async function embed(text: string): Promise<number[]> {
@@ -115,8 +135,6 @@ export async function embed(text: string): Promise<number[]> {
   if (!provider) throw new Error(`Unknown embedding provider: ${PROVIDER}`);
 
   if (!text || !text.trim()) return new Array(DIMENSIONS).fill(0);
-  // mxbai-embed-large has 512-token hard limit; FTS + substring channels cover full content
-  if (text.length > 1400) text = text.slice(0, 1400);
 
   let lastError: Error | null = null;
   for (let attempt = 0; attempt <= EMBED_RETRIES; attempt++) {
