@@ -102,7 +102,7 @@ temporal AS (
 entity_graph AS (
     SELECT
         m.id,
-        ROW_NUMBER() OVER (ORDER BY me.created_at DESC) AS rank
+        ROW_NUMBER() OVER (ORDER BY m.created_at DESC) AS rank
     FROM memories m
     JOIN base_filter bf ON bf.id = m.id
     JOIN memory_entities me ON me.memory_id = m.id
