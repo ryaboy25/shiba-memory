@@ -1,5 +1,4 @@
 import { query } from "../db.js";
-import { embed, pgVector } from "../embeddings.js";
 import { isLLMAvailable, llmChat } from "../llm.js";
 
 export interface EvolveResult {
@@ -75,13 +74,16 @@ export async function evolve(): Promise<EvolveResult> {
       ...instinct.tags.filter((t) => t !== "instinct"),
     ];
 
-    const vec = await embed(`${mergedTitle} ${clusterContent}`);
-
-    await query(
-      `INSERT INTO memories (type, title, content, embedding, tags, importance, confidence, source, profile)
-       VALUES ('skill', $1, $2, $3::vector, $4, 0.7, $5::float, 'evolve', 'global')`,
-      [mergedTitle, clusterContent, pgVector(vec), mergedTags, instinct.confidence]
-    );
+    // Use remember() for consistent dedup, auto-linking, user_id scoping
+    const { remember } = await import("./remember.js");
+    await remember({
+      type: "skill",
+      title: mergedTitle,
+      content: clusterContent,
+      tags: mergedTags,
+      importance: 0.7,
+      source: "evolve",
+    });
 
     // Delete original instinct and cluster members
     const allIds = [instinct.id, ...cluster.rows.map((c) => c.id)];

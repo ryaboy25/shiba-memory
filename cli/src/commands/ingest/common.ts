@@ -78,8 +78,8 @@ export async function ingestChunk(
   const vec = await embed(`${title} ${content}`);
 
   const result = await query<{ id: string }>(
-    `INSERT INTO memories (type, title, content, embedding, tags, importance, source, profile, project_path, expires_at)
-     VALUES ($1, $2, $3, $4::vector, $5, $6, $7, $8, $9, $10)
+    `INSERT INTO memories (type, title, content, embedding, tags, importance, source, profile, project_path, expires_at, user_id, agent_id)
+     VALUES ($1, $2, $3, $4::vector, $5, $6, $7, $8, $9, $10, 'default', 'default')
      RETURNING id`,
     [
       opts.type,

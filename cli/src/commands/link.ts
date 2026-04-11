@@ -51,17 +51,24 @@ export async function getRelated(
 }
 
 export async function autoLinkAll(): Promise<number> {
+  // Process in batches of 50 with Promise.all for parallelism (avoids N+1)
+  const BATCH_SIZE = 50;
   const result = await query<{ id: string }>(
     `SELECT id FROM memories WHERE embedding IS NOT NULL`
   );
 
   let totalLinks = 0;
-  for (const row of result.rows) {
-    const linkResult = await query<{ auto_link_memory: number }>(
-      `SELECT auto_link_memory($1)`,
-      [row.id]
+  for (let i = 0; i < result.rows.length; i += BATCH_SIZE) {
+    const batch = result.rows.slice(i, i + BATCH_SIZE);
+    const linkResults = await Promise.all(
+      batch.map((row) =>
+        query<{ auto_link_memory: number }>(
+          `SELECT auto_link_memory($1)`,
+          [row.id]
+        )
+      )
     );
-    totalLinks += linkResult.rows[0].auto_link_memory;
+    totalLinks += linkResults.reduce((sum, r) => sum + r.rows[0].auto_link_memory, 0);
   }
 
   return totalLinks;

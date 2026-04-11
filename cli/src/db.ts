@@ -18,9 +18,11 @@ const pool = new pg.Pool({
   database: process.env.SHB_DB_NAME || "shb",
   user: process.env.SHB_DB_USER || "shb",
   password: process.env.SHB_DB_PASSWORD,
-  max: 5,
+  max: parseInt(process.env.SHB_DB_POOL_MAX || "20"),
+  min: parseInt(process.env.SHB_DB_POOL_MIN || "2"),
   idleTimeoutMillis: 30000,
-  statement_timeout: 30000, // 30s query timeout
+  connectionTimeoutMillis: parseInt(process.env.SHB_DB_CONNECT_TIMEOUT || "5000"),
+  statement_timeout: parseInt(process.env.SHB_DB_STATEMENT_TIMEOUT || "30000"),
 });
 
 export async function query<T extends pg.QueryResultRow>(

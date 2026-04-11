@@ -31,17 +31,17 @@ function normalizeVec(vec: number[]): number[] {
   }
 
   // Warn once if dimensions don't match (likely wrong model configured)
-  if (!normalizeVec._warned && vec.length !== DIMENSIONS) {
+  if (!_dimWarned && vec.length !== DIMENSIONS) {
     console.error(
       `[shiba] WARNING: Embedding model returned ${vec.length} dims, expected ${DIMENSIONS}. ` +
       `Vectors are being resized + renormalized. For best results, use a ${DIMENSIONS}-dim model.`
     );
-    normalizeVec._warned = true;
+    _dimWarned = true;
   }
 
   return result;
 }
-normalizeVec._warned = false;
+let _dimWarned = false;
 
 const ollama: EmbeddingProvider = {
   async embed(text: string): Promise<number[]> {

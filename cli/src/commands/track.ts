@@ -1,5 +1,5 @@
 import { query } from "../db.js";
-import { embed, pgVector } from "../embeddings.js";
+import { remember } from "./remember.js";
 
 interface TrackerFeature {
   name: string;
@@ -31,22 +31,15 @@ export async function createTracker(
   };
 
   const content = `Progress tracker for ${projectName}. ${features.length} features: ${features.join(", ")}`;
-  const vec = await embed(`${projectName} progress tracker`);
 
-  const result = await query<{ id: string }>(
-    `INSERT INTO memories (type, title, content, embedding, tags, importance, source, metadata, profile)
-     VALUES ('project', $1, $2, $3::vector, $4, 0.8, 'track', $5::jsonb, 'global')
-     RETURNING id`,
-    [
-      `Tracker: ${projectName}`,
-      content,
-      pgVector(vec),
-      ["tracker", projectName.toLowerCase()],
-      JSON.stringify({ tracker }),
-    ]
-  );
-
-  return result.rows[0].id;
+  return remember({
+    type: "project",
+    title: `Tracker: ${projectName}`,
+    content,
+    tags: ["tracker", projectName.toLowerCase()],
+    importance: 0.8,
+    source: "track",
+  });
 }
 
 export async function updateTracker(

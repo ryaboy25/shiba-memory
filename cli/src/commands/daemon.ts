@@ -31,10 +31,11 @@ export function startDaemon(): void {
   runConsolidation();
 
   // Schedule periodic consolidation
-  setInterval(runConsolidation, CONSOLIDATE_INTERVAL);
+  const consolidationTimer = setInterval(runConsolidation, CONSOLIDATE_INTERVAL);
 
-  // Handle shutdown
+  // Handle shutdown — clear timer and clean up
   const shutdown = () => {
+    clearInterval(consolidationTimer);
     try {
       unlinkSync(PID_FILE);
     } catch { /* ignore */ }

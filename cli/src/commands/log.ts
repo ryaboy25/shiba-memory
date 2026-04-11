@@ -1,5 +1,5 @@
 import { query } from "../db.js";
-import { embed, pgVector } from "../embeddings.js";
+import { remember } from "./remember.js";
 
 function todayDate(): string {
   return new Date().toISOString().split("T")[0]; // YYYY-MM-DD
@@ -32,18 +32,15 @@ export async function appendLog(
     );
     return existing.rows[0].id;
   } else {
-    // Create new daily log
-    const title = `Daily Log: ${logDate}`;
-    const vec = await embed(`${title} ${entry}`);
-
-    const result = await query<{ id: string }>(
-      `INSERT INTO memories (type, title, content, embedding, tags, importance, source, profile)
-       VALUES ('episode', $1, $2, $3::vector, $4, 0.4, 'log', 'global')
-       RETURNING id`,
-      [title, entry, pgVector(vec), ["daily-log", tag]]
-    );
-
-    return result.rows[0].id;
+    // Create new daily log via remember() for consistent handling
+    return remember({
+      type: "episode",
+      title: `Daily Log: ${logDate}`,
+      content: entry,
+      tags: ["daily-log", tag],
+      importance: 0.4,
+      source: "log",
+    });
   }
 }
 
@@ -61,7 +58,6 @@ export async function showLog(
   );
 
   if (result.rows.length === 0) return null;
-
   return { date: logDate, content: result.rows[0].content };
 }
 

@@ -257,8 +257,8 @@ async function passCrossProjectInsights(): Promise<number> {
 
       await withTransaction(async (txQuery) => {
         await txQuery(
-          `INSERT INTO memories (type, title, content, embedding, tags, importance, source, profile)
-           VALUES ('skill', $1, $2, $3::vector, $4, 0.6, 'consolidation', 'global')`,
+          `INSERT INTO memories (type, title, content, embedding, tags, importance, source, profile, user_id, agent_id)
+           VALUES ('skill', $1, $2, $3::vector, $4, 0.6, 'consolidation', 'global', 'default', 'default')`,
           [
             `Cross-project pattern: ${p.tag}`,
             content,

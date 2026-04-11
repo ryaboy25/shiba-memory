@@ -46,27 +46,4 @@ export function validateMemory(
   return 0.5 + (validCount / checkCount) * 0.5; // Partial validity
 }
 
-/**
- * Check if a pattern/convention memory still holds by searching the codebase.
- * E.g., "User prefers camelCase" — check if recent files use camelCase.
- */
-export function isConventionStillActive(
-  convention: string,
-  projectPath: string,
-): boolean {
-  // Simple heuristic: if the convention mentions a file extension or pattern,
-  // check if files matching that pattern exist
-  // This is a lightweight check — not comprehensive
-  try {
-    const { execSync } = require("child_process");
-    // Check last 5 modified files for the convention pattern
-    const files = execSync(`find "${projectPath}" -name "*.ts" -o -name "*.js" -o -name "*.py" | head -5`, {
-      encoding: "utf-8",
-      timeout: 2000,
-    }).trim().split("\n");
-
-    return files.length > 0;
-  } catch {
-    return true; // Can't check — assume still valid
-  }
-}
+// isConventionStillActive removed — was dead code with command injection risk
