@@ -209,17 +209,17 @@ class ShibaAdapter:
         vec = embed(query.query)
         cur = self.conn.cursor()
 
-        # Use Shiba's scoped_recall with namespace tag filtering (Phase 1B) + recency boost (Phase 2A)
+        # Use Shiba's scoped_recall with 5-channel RRF (schema 014)
         filter_tags = [namespace] if namespace != "default" else None
         cur.execute(
-            """SELECT id, type, title, content, metadata, tags, relevance
-               FROM scoped_recall(%s::vector, %s, %s, NULL, NULL, NULL, %s, 0.7, 0.3, 0.3)""",
+            """SELECT id, type, title, content, metadata, tags, profile, project_path, relevance, created_at
+               FROM scoped_recall(%s::vector, %s, %s, NULL, NULL, NULL, %s, 0.5, 0.5, 0.3, 'fast', NULL, NULL, NULL, NULL)""",
             [pg_vector(vec), query.query, query.top_k, filter_tags],
         )
 
         results = []
         for row in cur.fetchall():
-            mem_id, mem_type, title, content, metadata, tags, relevance = row
+            mem_id, mem_type, title, content, metadata, tags, profile, project_path, relevance, created_at = row
             doc_id = ""
             if metadata and isinstance(metadata, dict):
                 doc_id = metadata.get("document_id", str(mem_id))
