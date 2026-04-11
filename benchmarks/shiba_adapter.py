@@ -64,6 +64,7 @@ def _embed_ollama(text: str, retries: int = 2) -> list[float]:
                 time.sleep(2 ** attempt)
                 continue
             print(f"Ollama 400 response body: {e.response.text}")
+            print(f"Model used: {OLLAMA_MODEL}")
             print(f"Input text length: {len(text)}, first 100 chars: {text[:100]!r}")
             raise
 
