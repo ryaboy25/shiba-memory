@@ -849,8 +849,10 @@ function createApp() {
     const { extractFacts } = await import("../extraction/targeted.js");
     const result = await extractFacts(body.user_message, body.assistant_message);
 
+    // Store extracted facts
+    const memoryIds: string[] = [];
     for (const fact of result.facts) {
-      await remember({
+      const id = await remember({
         type: fact.type,
         title: fact.title,
         content: fact.content,
@@ -859,9 +861,57 @@ function createApp() {
         source: "extraction",
         userId: body.user_id,
       });
+      memoryIds.push(id);
     }
 
-    return c.json({ status: "ok", count: result.facts.length, facts: result.facts, tokens_used: result.tokens_used });
+    // Store extracted entities and link to memories
+    let entitiesStored = 0;
+    if (result.entities?.length) {
+      for (const entity of result.entities) {
+        try {
+          // Resolve or create entity
+          const existing = await query<{ id: string }>(
+            `SELECT id FROM entities WHERE (lower(canonical_name) = lower($1) OR lower($1) = ANY(SELECT lower(unnest(aliases))))
+             AND (user_id = $2 OR user_id = 'default') LIMIT 1`,
+            [entity.name, body.user_id]
+          );
+
+          let entityId: string;
+          if (existing.rows.length > 0) {
+            entityId = existing.rows[0].id;
+            // Add as alias if not already present
+            await query(
+              `UPDATE entities SET aliases = array_append(aliases, $1), updated_at = now()
+               WHERE id = $2 AND NOT ($1 = ANY(aliases)) AND lower(canonical_name) != lower($1)`,
+              [entity.name, entityId]
+            );
+          } else {
+            const created = await query<{ id: string }>(
+              `INSERT INTO entities (canonical_name, entity_type, user_id) VALUES ($1, $2, $3) RETURNING id`,
+              [entity.name, entity.type, body.user_id]
+            );
+            entityId = created.rows[0].id;
+          }
+
+          // Link entity to all memories created in this extraction
+          for (const memId of memoryIds) {
+            await query(
+              `INSERT INTO memory_entities (memory_id, entity_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+              [memId, entityId]
+            );
+          }
+          entitiesStored++;
+        } catch { /* entity storage is best-effort */ }
+      }
+    }
+
+    return c.json({
+      status: "ok",
+      count: result.facts.length,
+      facts: result.facts,
+      entities_stored: entitiesStored,
+      tokens_used: result.tokens_used,
+    });
   });
 
   // ── Metrics (Prometheus-compatible) ─────────────────────

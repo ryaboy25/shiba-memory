@@ -37,11 +37,34 @@ export interface Memory {
 export async function recall(opts: RecallOptions & { skipTouch?: boolean } = { query: "" }): Promise<Memory[]> {
   const vec = await embed(opts.query);
 
+  // Auto-detect temporal queries and set date range
+  let after = opts.after || null;
+  let before = opts.before || null;
+  if (!after && !before) {
+    try {
+      const { parseTemporalQuery } = await import("../extraction/temporal.js");
+      const temporal = parseTemporalQuery(opts.query);
+      if (temporal) {
+        after = temporal.after.toISOString();
+        before = temporal.before.toISOString();
+      }
+    } catch { /* temporal parser is optional */ }
+  }
+
+  // Query-aware retrieval policy: adjust search strategy per query type
+  let policy: { depth: number; rerank: boolean; recencyWeight: number } | null = null;
+  try {
+    const { classifyQuery } = await import("../extraction/query_classifier.js");
+    policy = classifyQuery(opts.query);
+  } catch { /* classifier is optional */ }
+
   const filterTags = opts.tags || null;
-  const limit = opts.limit || 10;
+  const limit = opts.limit || policy?.depth || 10;
+  const shouldRerank = opts.rerank ?? policy?.rerank ?? false;
+  const recencyWeight = policy?.recencyWeight ?? 0.0;
 
   // Fetch more candidates if we'll rerank (need a broader pool)
-  const fetchLimit = opts.rerank ? Math.max(limit * 3, 20) : limit;
+  const fetchLimit = shouldRerank ? Math.max(limit * 3, 20) : limit;
 
   const result = await query<Memory>(
     `SELECT * FROM scoped_recall($1::vector, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
@@ -55,14 +78,14 @@ export async function recall(opts: RecallOptions & { skipTouch?: boolean } = { q
       filterTags,
       opts.semanticWeight ?? 0.5,
       opts.fulltextWeight ?? 0.5,
-      0.0,     // recency_weight
+      recencyWeight,  // dynamic per query type
       "fast",  // actr_mode
       // User/agent isolation — now handled in SQL, not client-side
       opts.userId || null,
       opts.agentId || null,
-      // Temporal filtering
-      opts.after || null,
-      opts.before || null,
+      // Temporal filtering (auto-detected or explicit)
+      after,
+      before,
     ]
   );
 
@@ -71,7 +94,7 @@ export async function recall(opts: RecallOptions & { skipTouch?: boolean } = { q
   // ── Cross-encoder reranking ──────────────────────────────
   // Use LLM to score query-document relevance for top results.
   // This is more accurate than embedding distance alone.
-  if (opts.rerank && rows.length > 1) {
+  if (shouldRerank && rows.length > 1) {
     try {
       const { isLLMAvailable, llmChat } = await import("../llm.js");
       if (isLLMAvailable()) {

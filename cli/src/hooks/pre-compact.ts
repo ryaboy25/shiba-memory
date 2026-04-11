@@ -56,8 +56,8 @@ safeRun(async () => {
 
   // If we have accumulated decisions, store them as a session snapshot
   if (decisions && decisions.length > 0) {
-    const decisionText = decisions
-      .map((d: string) => {
+    const decisionText = (decisions as string[])
+      .map((d) => {
         try {
           const parsed = JSON.parse(d);
           return JSON.stringify(parsed);

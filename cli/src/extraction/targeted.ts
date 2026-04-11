@@ -9,6 +9,11 @@
 
 import { llmChat, isLLMAvailable, type ChatMessage } from "../llm.js";
 
+export interface ExtractedEntity {
+  name: string;
+  type: string; // person, pet, place, org, concept
+}
+
 export interface ExtractionResult {
   facts: {
     type: "user" | "feedback" | "project" | "skill" | "instinct" | "episode";
@@ -17,6 +22,7 @@ export interface ExtractionResult {
     confidence: number;
     tags: string[];
   }[];
+  entities?: ExtractedEntity[];
   tokens_used: number;
 }
 
@@ -311,15 +317,17 @@ export async function extractFacts(
   const messages: ChatMessage[] = [
     {
       role: "system",
-      content: `Extract factual information about the user from this conversation. Return JSON: {"facts": [{"fact": "...", "type": "user|project|skill", "importance": 0.1-1.0}]}
+      content: `Extract factual information and entities from this conversation. Return JSON:
+{"facts": [{"fact": "...", "type": "user|project|skill", "importance": 0.1-1.0}], "entities": [{"name": "...", "type": "person|pet|place|org|concept"}]}
 
 Rules:
-- Extract ONLY facts about the user, their life, preferences, work, pets, family, health, decisions
-- Each fact should be a short, self-contained statement (under 20 words)
-- Skip generic AI assistant responses — focus on what the USER reveals
-- Skip trivial facts. Focus on things worth remembering long-term
-- Return empty array if no meaningful facts found
-- Max 5 facts per exchange`,
+- Extract facts about the user: life, preferences, work, pets, family, health, decisions
+- Each fact: short, self-contained (under 20 words)
+- Extract entities: people, pets, places, organizations mentioned by name
+- Skip generic AI responses — focus on what the USER reveals
+- Skip trivial facts. Focus on long-term memorable info
+- Return empty arrays if nothing meaningful found
+- Max 5 facts, max 5 entities per exchange`,
     },
     {
       role: "user",
@@ -360,7 +368,16 @@ Rules:
             confidence: 0.7,
             tags: ["extracted-fact", "tier-2-facts"] as string[],
           }));
-        return { facts: results, tokens_used: 800 };
+        // Extract entities if present
+        const entities: ExtractedEntity[] = (direct.entities || [])
+          .filter((e: { name?: string }) => e.name && e.name.length > 1)
+          .slice(0, 5)
+          .map((e: { name: string; type?: string }) => ({
+            name: e.name,
+            type: e.type || "unknown",
+          }));
+
+        return { facts: results, entities, tokens_used: 800 };
       }
     } catch { /* not clean JSON, try harder */ }
 
