@@ -475,6 +475,22 @@ program
     }));
   }));
 
+// ─── compile ──────────────────────────────────────────────
+program
+  .command("compile")
+  .description("Compile episodic memories into structured knowledge articles")
+  .option("--project <path>", "Scope to a project")
+  .action(action(async (opts: Record<string, unknown>) => {
+    const { compile } = await import("./commands/compile.js");
+    const result = await compile(opts.project as string | undefined);
+    console.log(JSON.stringify({
+      status: "ok",
+      articles_created: result.articles_created,
+      episodes_processed: result.episodes_processed,
+      tokens_used: result.tokens_used,
+    }));
+  }));
+
 // ─── entity ───────────────────────────────────────────────
 const entityCmd = program
   .command("entity")

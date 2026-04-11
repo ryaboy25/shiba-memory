@@ -112,21 +112,36 @@ entity_graph AS (
     LIMIT match_count * 3
 ),
 
--- Reciprocal Rank Fusion: combine all channels by rank position
+-- Channel 5: Substring/exact match (SmartSearch finding: 98.9% resolves via substring)
+-- The cheapest and most effective retrieval for keyword-heavy queries
+substring_match AS (
+    SELECT
+        m.id,
+        ROW_NUMBER() OVER (ORDER BY m.importance DESC, m.confidence DESC) AS rank
+    FROM memories m
+    JOIN base_filter bf ON bf.id = m.id
+    WHERE (m.title ILIKE '%' || query_text || '%'
+       OR m.content ILIKE '%' || query_text || '%')
+    LIMIT match_count * 2
+),
+
+-- Reciprocal Rank Fusion: combine ALL 5 channels by rank position
 -- RRF score = Σ 1/(k + rank_i) where k=60
 -- Higher score = found in more channels and/or ranked higher
 rrf AS (
     SELECT
-        COALESCE(s.id, f.id, t.id, eg.id) AS id,
+        COALESCE(s.id, f.id, t.id, eg.id, sm.id) AS id,
         COALESCE(1.0 / (60 + s.rank), 0)
           + COALESCE(1.0 / (60 + f.rank), 0)
           + COALESCE(1.0 / (60 + t.rank), 0)
           + COALESCE(1.0 / (60 + eg.rank), 0)
+          + COALESCE(1.0 / (60 + sm.rank), 0)
         AS base_score
     FROM semantic s
     FULL OUTER JOIN fulltext f ON s.id = f.id
     FULL OUTER JOIN temporal t ON COALESCE(s.id, f.id) = t.id
     FULL OUTER JOIN entity_graph eg ON COALESCE(s.id, f.id, t.id) = eg.id
+    FULL OUTER JOIN substring_match sm ON COALESCE(s.id, f.id, t.id, eg.id) = sm.id
 ),
 
 -- Apply ACT-R + confidence + graph boost + project boost + recency

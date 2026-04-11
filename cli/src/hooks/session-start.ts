@@ -86,10 +86,20 @@ safeRun(async () => {
     return true;
   });
 
-  // Output as structured context with timestamps for temporal reasoning
+  // Progressive disclosure (Claude-Mem pattern):
+  // Inject compact summary first. Agent can request more via shiba_recall.
+  // Compress content for token savings (AAAK pattern from Mnemosyne).
+  let compressContent: (text: string) => string = (t) => t;
+  try {
+    const { compressForContext } = await import("../utils/compress.js");
+    compressContent = compressForContext;
+  } catch { /* compression is optional */ }
+
+  // Output compact context with timestamps for temporal reasoning
   const lines = unique.map((m) => {
     const date = m.created_at ? ` (${new Date(m.created_at).toLocaleDateString()})` : "";
-    return `[${m.type}]${date} ${m.title}: ${m.content.slice(0, 200)}`;
+    const content = compressContent(m.content.slice(0, 150));
+    return `[${m.type}]${date} ${m.title}: ${content}`;
   });
 
   // Escape XML special chars in project name to prevent injection

@@ -142,6 +142,25 @@ export async function recall(opts: RecallOptions & { skipTouch?: boolean } = { q
   // Trim to requested limit (for non-reranked case with extra fetch)
   rows = rows.slice(0, limit);
 
+  // Context-position reordering (Ogham/primacy-recency effect):
+  // LLMs attend most to START and END of context. Reorder so best results
+  // are at positions 1, N, 2, N-1, 3, ... (interleaved from edges inward)
+  if (rows.length > 3) {
+    const reordered: Memory[] = [];
+    let left = 0;
+    let right = rows.length - 1;
+    let fromLeft = true;
+    while (left <= right) {
+      if (fromLeft) {
+        reordered.push(rows[left++]);
+      } else {
+        reordered.push(rows[right--]);
+      }
+      fromLeft = !fromLeft;
+    }
+    rows = reordered;
+  }
+
   // Batch-touch all returned memories (single query instead of N+1)
   if (!opts.skipTouch && rows.length > 0) {
     const ids = rows.map((r: Memory) => r.id);

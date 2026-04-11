@@ -47,10 +47,31 @@ export function startDaemon(): void {
 
 async function runConsolidation(): Promise<void> {
   try {
+    // Sleep-time consolidation (LightMem pattern): do expensive reorg between sessions
     const result = await consolidate();
     process.stderr.write(
       `[shiba] Consolidation: merged=${result.merged} contradictions=${result.contradictions} decayed=${result.decayed} expired=${result.expired} linked=${result.linked} insights=${result.insights}\n`
     );
+
+    // Evolve instincts → skills (with LLM verification if available)
+    try {
+      const { evolve } = await import("./evolve.js");
+      const evolveResult = await evolve();
+      if (evolveResult.promoted > 0) {
+        process.stderr.write(
+          `[shiba] Evolution: promoted=${evolveResult.promoted} verified=${evolveResult.llm_verified} clustered=${evolveResult.clustered}\n`
+        );
+      }
+    } catch (err) {
+      process.stderr.write(`[shiba] Evolution error: ${(err as Error).message}\n`);
+    }
+
+    // Clean up expired scratchpad entries
+    try {
+      const { query } = await import("../db.js");
+      await query(`DELETE FROM scratchpad WHERE expires_at < now()`);
+    } catch { /* scratchpad table may not exist yet */ }
+
   } catch (err) {
     process.stderr.write(`[shiba] Consolidation error: ${(err as Error).message}\n`);
   }
