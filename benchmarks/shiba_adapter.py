@@ -48,15 +48,22 @@ DIMENSIONS = int(os.getenv("SHB_EMBED_DIMENSIONS", "1024"))
 
 # ── Embedding ───────────────────────────────────────────────────
 
-def _embed_ollama(text: str) -> list[float]:
-    resp = httpx.post(
-        f"{OLLAMA_URL}/api/embed",
-        json={"model": OLLAMA_MODEL, "input": text},
-        timeout=30,
-    )
-    resp.raise_for_status()
-    vec = resp.json()["embeddings"][0]
-    return _normalize(vec[:DIMENSIONS] if len(vec) >= DIMENSIONS else vec + [0.0] * (DIMENSIONS - len(vec)))
+def _embed_ollama(text: str, retries: int = 2) -> list[float]:
+    for attempt in range(retries + 1):
+        try:
+            resp = httpx.post(
+                f"{OLLAMA_URL}/api/embed",
+                json={"model": OLLAMA_MODEL, "input": text},
+                timeout=60,
+            )
+            resp.raise_for_status()
+            vec = resp.json()["embeddings"][0]
+            return _normalize(vec[:DIMENSIONS] if len(vec) >= DIMENSIONS else vec + [0.0] * (DIMENSIONS - len(vec)))
+        except httpx.HTTPStatusError as e:
+            if attempt < retries:
+                time.sleep(2 ** attempt)
+                continue
+            raise
 
 
 def _embed_openai(text: str) -> list[float]:
@@ -76,6 +83,8 @@ def _normalize(vec: list[float]) -> list[float]:
 
 
 def embed(text: str) -> list[float]:
+    if not text or not text.strip():
+        return [0.0] * DIMENSIONS
     if EMBEDDING_PROVIDER == "openai":
         return _embed_openai(text)
     return _embed_ollama(text)
