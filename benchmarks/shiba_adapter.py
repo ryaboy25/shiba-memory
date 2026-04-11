@@ -84,9 +84,13 @@ def _normalize(vec: list[float]) -> list[float]:
     return [v / mag for v in vec]
 
 
+MAX_EMBED_CHARS = 1500  # ~375 tokens, safe for 512-token context models
+
 def embed(text: str) -> list[float]:
     if not text or not text.strip():
         return [0.0] * DIMENSIONS
+    if len(text) > MAX_EMBED_CHARS:
+        text = text[:MAX_EMBED_CHARS]
     if EMBEDDING_PROVIDER == "openai":
         return _embed_openai(text)
     return _embed_ollama(text)
