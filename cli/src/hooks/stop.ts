@@ -95,8 +95,74 @@ safeRun(async () => {
     }
   }
 
+  // ── Tier 2: Fact + Entity extraction from session episodes ──
+  if ((event?.message_count || 0) >= 3) {
+    try {
+      const { isLLMAvailable } = await import("../llm.js");
+      if (isLLMAvailable()) {
+        const episodes = await queryDB<{ content: string }>(
+          `SELECT content FROM memories
+           WHERE type = 'episode'
+             AND tags @> ARRAY['session-event']
+             AND project_path = $1
+           ORDER BY created_at DESC
+           LIMIT 10`,
+          [projectPath]
+        );
+
+        if (episodes.rows.length >= 2) {
+          const { extractFacts } = await import("../extraction/targeted.js");
+          const combined = episodes.rows.map((r) => r.content).join("\n");
+          const result = await extractFacts(combined);
+          const memoryIds: string[] = [];
+
+          for (const fact of result.facts) {
+            const id = await remember({
+              type: fact.type,
+              title: fact.title,
+              content: fact.content,
+              tags: [...fact.tags, projectName],
+              importance: fact.confidence,
+              source: "hook",
+              profile: fact.type === "project" ? "project" : "global",
+              projectPath: fact.type === "project" ? projectPath : undefined,
+            });
+            if (id && id !== "stored") memoryIds.push(id);
+          }
+
+          // Store entities and link to memories
+          if (result.entities?.length) {
+            for (const entity of result.entities) {
+              try {
+                const resolved = await queryDB<{ id: string }>(
+                  `SELECT resolve_entity($1, $2) AS id`,
+                  [entity.name, null]
+                );
+                const entityId = resolved.rows[0]?.id;
+                if (entityId) {
+                  await queryDB(
+                    `UPDATE entities SET entity_type = COALESCE(entity_type, $1) WHERE id = $2`,
+                    [entity.type, entityId]
+                  );
+                  for (const memId of memoryIds) {
+                    await queryDB(
+                      `INSERT INTO memory_entities (memory_id, entity_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+                      [memId, entityId]
+                    );
+                  }
+                }
+              } catch { /* best-effort */ }
+            }
+          }
+        }
+      }
+    } catch {
+      // Fact extraction is optional
+    }
+  }
+
   // ── Tier 2: Preference inference (if LLM available + enough messages) ──
-  if ((event?.message_count || 0) >= 6) {
+  if ((event?.message_count || 0) >= 4) {
     try {
       const { isLLMAvailable } = await import("../llm.js");
       if (isLLMAvailable()) {

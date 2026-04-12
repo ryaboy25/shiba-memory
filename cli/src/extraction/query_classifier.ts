@@ -43,17 +43,17 @@ export function classifyQuery(query: string): QueryPolicy {
   }
 
   // Preference: what the user likes/prefers
-  if (/\b(prefer|like|favorite|style|usually|always|habit|convention|standard)\b/.test(lower)) {
+  if (/\b(prefer|like|favorite|style|usually|always|habit|convention|standard|choice|opinion|rather|tend\s+to|go[\s-]to)\b/.test(lower)) {
     return {
       category: "preference",
-      depth: 5,
+      depth: 10,  // Increased from 5 — preferences are spread across many memories
       rerank: false,
       recencyWeight: 0.2,
     };
   }
 
-  // Entity-focused: asking about a specific person/pet/place
-  if (/\b(who\s+is|where\s+is|what\s+is\s+\w+'s|my\s+(?:dog|cat|wife|husband|boss|friend|mom|dad|brother|sister))\b/.test(lower)) {
+  // Entity-focused: asking about a specific person/pet/place/thing by name
+  if (/\b(who\s+is|where\s+is|what\s+is\s+\w+'s|what\s+about|tell\s+me\s+about\s+\w+|my\s+(?:dog|cat|pet|wife|husband|partner|boss|friend|mom|dad|brother|sister|son|daughter|team|company))\b/.test(lower)) {
     return {
       category: "entity",
       depth: 15,

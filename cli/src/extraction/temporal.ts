@@ -112,5 +112,69 @@ export function parseTemporalQuery(query: string): TemporalRange | null {
     return { after: start, before: now };
   }
 
+  // "this morning" / "this afternoon" / "this evening"
+  if (/\bthis\s+morning\b/.test(lower)) {
+    const start = new Date(now);
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(now);
+    end.setHours(12, 0, 0, 0);
+    return { after: start, before: end };
+  }
+  if (/\bthis\s+(?:afternoon|evening)\b/.test(lower)) {
+    const start = new Date(now);
+    start.setHours(12, 0, 0, 0);
+    return { after: start, before: now };
+  }
+
+  // "last N hours"
+  const hoursMatch = lower.match(/\b(?:last|past)\s+(\d+)\s+hours?\b/);
+  if (hoursMatch) {
+    const start = new Date(now);
+    start.setHours(start.getHours() - parseInt(hoursMatch[1]));
+    return { after: start, before: now };
+  }
+
+  // "before last week" / "before yesterday"
+  if (/\bbefore\s+yesterday\b/.test(lower)) {
+    const end = new Date(now);
+    end.setDate(end.getDate() - 1);
+    end.setHours(0, 0, 0, 0);
+    const start = new Date(end);
+    start.setMonth(start.getMonth() - 3);
+    return { after: start, before: end };
+  }
+
+  // "since Monday" / "since Tuesday" etc.
+  const dayNames = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+  const sinceDay = lower.match(new RegExp(`\\bsince\\s+(${dayNames.join("|")})\\b`));
+  if (sinceDay) {
+    const targetDay = dayNames.indexOf(sinceDay[1]);
+    const start = new Date(now);
+    const diff = (now.getDay() - targetDay + 7) % 7 || 7;
+    start.setDate(start.getDate() - diff);
+    start.setHours(0, 0, 0, 0);
+    return { after: start, before: now };
+  }
+
+  // "on Monday" / "on Tuesday" etc. (most recent occurrence)
+  const onDay = lower.match(new RegExp(`\\bon\\s+(${dayNames.join("|")})\\b`));
+  if (onDay) {
+    const targetDay = dayNames.indexOf(onDay[1]);
+    const start = new Date(now);
+    const diff = (now.getDay() - targetDay + 7) % 7 || 7;
+    start.setDate(start.getDate() - diff);
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(start);
+    end.setHours(23, 59, 59, 999);
+    return { after: start, before: end };
+  }
+
+  // "earlier" / "previously" / "before" (broad: last 30 days)
+  if (/\b(?:earlier|previously)\b/.test(lower)) {
+    const start = new Date(now);
+    start.setDate(start.getDate() - 30);
+    return { after: start, before: now };
+  }
+
   return null;
 }

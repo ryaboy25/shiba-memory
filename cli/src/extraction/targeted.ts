@@ -207,12 +207,13 @@ Return an empty array if no clear preferences are detected. Max 5 preferences.`,
     if (!parsed.preferences?.length) return EMPTY;
 
     const facts: ExtractionResult["facts"] = parsed.preferences
-      .filter((p) => p.preference && (p.confidence || 0.5) >= 0.4)
+      .filter((p) => p.preference && (p.confidence || 0.5) >= 0.3)
       .map((p) => ({
-        type: "instinct" as const,
+        // Store high-confidence preferences as user facts, not instincts
+        type: ((p.confidence || 0.5) >= 0.7 ? "user" : "instinct") as "user" | "instinct",
         title: `Preference: ${(p.preference || "").slice(0, 80)}`,
         content: `Implicit preference: ${p.preference}. Evidence: ${p.evidence || "behavioral observation"}.`,
-        confidence: Math.min(p.confidence || 0.5, 0.6), // Cap at 0.6 — instincts need confirmation
+        confidence: Math.min(p.confidence || 0.5, 0.75), // Allow up to 0.75 for strong signals
         tags: ["preference", "implicit", "tier-2-targeted"],
       }));
 

@@ -67,6 +67,19 @@ async function runConsolidation(): Promise<void> {
       process.stderr.write(`[shiba] Evolution error: ${(err as Error).message}\n`);
     }
 
+    // Knowledge compilation: synthesize episodes into skill articles
+    try {
+      const { compile } = await import("./compile.js");
+      const compileResult = await compile();
+      if (compileResult.articles_created > 0) {
+        process.stderr.write(
+          `[shiba] Compilation: articles=${compileResult.articles_created} episodes=${compileResult.episodes_processed}\n`
+        );
+      }
+    } catch (err) {
+      process.stderr.write(`[shiba] Compilation error: ${(err as Error).message}\n`);
+    }
+
     // Clean up expired scratchpad entries
     try {
       const { query } = await import("../db.js");

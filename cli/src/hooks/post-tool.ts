@@ -80,6 +80,57 @@ safeRun(async () => {
           // Tier 2 is optional — LLM may not be configured
         }
       }
+
+      // ── Tier 2: Fact + Entity extraction (if LLM available) ─────
+      if (event.user_message && event.user_message.length >= 20) {
+        try {
+          const { extractFacts } = await import("../extraction/targeted.js");
+          const { isLLMAvailable } = await import("../llm.js");
+          if (isLLMAvailable()) {
+            const result = await extractFacts(event.user_message, event.assistant_message);
+            const memoryIds: string[] = [];
+            for (const fact of result.facts) {
+              const id = await remember({
+                type: fact.type,
+                title: fact.title,
+                content: fact.content,
+                tags: [...fact.tags, projectName],
+                importance: fact.confidence,
+                source: "hook",
+              });
+              if (id && id !== "stored") memoryIds.push(id);
+            }
+            // Store entities and link to extracted memories
+            if (result.entities?.length) {
+              for (const entity of result.entities) {
+                try {
+                  const resolved = await queryDB<{ id: string }>(
+                    `SELECT resolve_entity($1, $2) AS id`,
+                    [entity.name, null]
+                  );
+                  const entityId = resolved.rows[0]?.id;
+                  if (entityId) {
+                    // Update entity type if we have one
+                    await queryDB(
+                      `UPDATE entities SET entity_type = COALESCE(entity_type, $1) WHERE id = $2`,
+                      [entity.type, entityId]
+                    );
+                    // Link entity to all memories from this extraction
+                    for (const memId of memoryIds) {
+                      await queryDB(
+                        `INSERT INTO memory_entities (memory_id, entity_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+                        [memId, entityId]
+                      );
+                    }
+                  }
+                } catch { /* entity storage is best-effort */ }
+              }
+            }
+          }
+        } catch {
+          // Fact extraction is optional
+        }
+      }
     } catch {
       // Pattern extraction failure is non-critical
     }

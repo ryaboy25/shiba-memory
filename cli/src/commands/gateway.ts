@@ -60,6 +60,8 @@ const RecallSchema = z.object({
   before: z.string().datetime().optional(),  // ISO 8601 — only memories before this date
   // Cross-encoder reranking
   rerank: z.boolean().default(false),
+  // Context expansion: enrich results with surrounding session turns
+  expand_context: z.boolean().default(false),
 });
 
 const ForgetSchema = z.object({
@@ -353,6 +355,7 @@ function createApp() {
       after: body.after,
       before: body.before,
       rerank: body.rerank,
+      expandContext: body.expand_context,
     });
     return c.json({ status: "ok", count: results.length, memories: results });
   });

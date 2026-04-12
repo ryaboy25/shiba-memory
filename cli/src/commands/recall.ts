@@ -17,6 +17,8 @@ export interface RecallOptions {
   before?: string;  // ISO 8601 date — only memories created before this
   // Cross-encoder reranking: use LLM to rerank top results for accuracy
   rerank?: boolean;
+  // Expand results with surrounding session context
+  expandContext?: boolean;
 }
 
 export interface Memory {
@@ -159,6 +161,24 @@ export async function recall(opts: RecallOptions & { skipTouch?: boolean } = { q
       fromLeft = !fromLeft;
     }
     rows = reordered;
+  }
+
+  // Context expansion: enrich top results with surrounding session turns
+  if (opts.expandContext && rows.length > 0) {
+    try {
+      const { expandResults } = await import("../utils/context_expand.js");
+      const expanded = await expandResults(rows.map((r: Memory) => r.id), 3, 1);
+      for (const row of rows) {
+        const ctx = expanded.get(row.id);
+        if (ctx) {
+          const parts: string[] = [];
+          if (ctx.before_context) parts.push(`[Previous] ${ctx.before_context}`);
+          parts.push(row.content);
+          if (ctx.after_context) parts.push(`[Next] ${ctx.after_context}`);
+          row.content = parts.join("\n");
+        }
+      }
+    } catch { /* context expansion is optional */ }
   }
 
   // Batch-touch all returned memories (single query instead of N+1)
