@@ -85,63 +85,45 @@ Answer:"""
 
 
 def judge_answer(question, expected, generated):
-    """Use LLM to judge if the generated answer matches the expected answer."""
-    prompt = f"""You are an evaluation judge. Determine if the Generated Answer correctly answers the Question, compared to the Expected Answer.
-Consider the answer correct if it contains the essential information from the Expected Answer, even if worded differently. Minor details may differ.
-Reply with ONLY "correct" or "incorrect".
+    """Use LLM to judge if the generated answer matches the expected answer.
+
+    Strategy: Use llm_chat (content only, not reasoning) with a very constrained
+    prompt to get a clean verdict. Gemma's reasoning chain pollutes raw output
+    with ambiguous phrases that break pattern matching.
+    """
+    # If generated answer is empty or refusal, it's incorrect
+    if not generated or len(generated.strip()) < 3:
+        return False
+    gen_lower = generated.lower()
+    if any(p in gen_lower for p in ["i don't have", "not enough information", "no information", "cannot determine"]):
+        return False
+
+    # Quick string-match check: if the expected answer literally appears in the generated answer, it's correct
+    expected_clean = expected.strip().strip("\"'").strip().lower()
+    gen_clean = generated.strip().lower()
+    if expected_clean and expected_clean in gen_clean:
+        return True
+
+    # Use LLM judge with content-only response (strips reasoning chain noise)
+    prompt = f"""Compare the Generated Answer to the Expected Answer. Does the Generated Answer contain the key information from the Expected Answer?
+
+Reply with exactly one word: correct or incorrect
 
 Question: {question}
-Expected Answer: {expected}
-Generated Answer: {generated}
+Expected: {expected}
+Generated: {generated}
 
 Verdict:"""
-    # Use raw response to capture reasoning + final answer (Gemma thinks before answering)
-    result = llm_chat_raw(prompt, max_tokens=300)
-    result_lower = result.lower()
+    result = llm_chat(prompt, max_tokens=200)  # Content only, strips reasoning chain
+    result_lower = result.lower().strip()
 
-    # Parse the verdict from Gemma's reasoning chain
-    # Look for final verdict indicators first (strongest signals)
-    if "verdict: correct" in result_lower or "verdict:correct" in result_lower:
+    # Parse the clean content response
+    if result_lower.startswith("correct"):
         return True
-    if "verdict: incorrect" in result_lower or "verdict:incorrect" in result_lower:
+    if result_lower.startswith("incorrect"):
         return False
 
-    # Look for conclusion patterns in reasoning
-    conclusion_patterns_correct = [
-        "the answer is correct",
-        "is correct",
-        "correctly answers",
-        "conveys the same",
-        "matches the expected",
-        "essentially correct",
-        "the generated answer is correct",
-        "word: correct",
-    ]
-    conclusion_patterns_incorrect = [
-        "the answer is incorrect",
-        "is incorrect",
-        "does not correctly",
-        "does not match",
-        "does not convey",
-        "essentially incorrect",
-        "the generated answer is incorrect",
-        "word: incorrect",
-        "not enough information",
-        "doesn't match",
-        "doesn't correctly",
-    ]
-
-    # Count matches for each side
-    correct_hits = sum(1 for p in conclusion_patterns_correct if p in result_lower)
-    incorrect_hits = sum(1 for p in conclusion_patterns_incorrect if p in result_lower)
-
-    if correct_hits > incorrect_hits:
-        return True
-    if incorrect_hits > correct_hits:
-        return False
-
-    # Fallback: check if "correct" appears more than "incorrect"
-    # (careful: "incorrect" contains "correct")
+    # Fallback: count occurrences
     incorrect_count = result_lower.count("incorrect")
     correct_count = result_lower.count("correct") - incorrect_count
     return correct_count > incorrect_count
