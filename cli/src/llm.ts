@@ -63,12 +63,16 @@ const openaiCompatible: LLMProvider = {
     };
 
     const msg = data.choices[0].message;
-    const content = msg.content || "";
+    let content = msg.content || "";
     const reasoning = msg.reasoning_content || "";
 
+    // Strip Gemma channel/turn artifacts from non-reasoning template
+    if (content.includes("<channel|>")) content = content.split("<channel|>").pop()!;
+    content = content.replace(/<end_of_turn>/g, "").replace(/<\|channel>thought\n/g, "").trim();
+
     // Return content if available, otherwise fall back to reasoning
-    if (content.trim()) return content.trim();
-    if (reasoning.includes("<channel|>")) return reasoning.split("<channel|>").pop()!.trim();
+    if (content) return content;
+    if (reasoning.includes("<channel|>")) return reasoning.split("<channel|>").pop()!.replace(/<end_of_turn>/g, "").trim();
     if (reasoning.trim()) return reasoning.trim();
     return "";
   },
