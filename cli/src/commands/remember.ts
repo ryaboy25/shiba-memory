@@ -19,6 +19,7 @@ export interface RememberOptions {
   projectPath?: string;
   confidence?: number; // Override confidence (0.025-0.975, default: schema default 0.5)
   temporalRef?: string; // ISO date — what time period this memory refers to
+  createdAt?: string;  // Override created_at timestamp (ISO 8601)
   userId?: string;     // User isolation (default: "default")
   agentId?: string;    // Agent isolation (default: "default")
 }
@@ -128,30 +129,29 @@ async function rememberSingle(opts: RememberOptions): Promise<string> {
 
     const expiresAt = opts.expiresIn ? parseExpiry(opts.expiresIn) : null;
 
-    const hasConfidence = opts.confidence !== undefined;
+    // Build INSERT dynamically based on which optional fields are provided
+    const cols = ["type", "title", "content", "embedding", "tags", "importance", "source", "expires_at", "profile", "project_path", "temporal_ref", "user_id", "agent_id"];
+    const vals: unknown[] = [
+      opts.type, opts.title, opts.content, pgVector(vec),
+      opts.tags || [], opts.importance ?? 0.5,
+      opts.source || "manual", expiresAt,
+      opts.profile || "global", opts.projectPath || null,
+      opts.temporalRef || null, opts.userId || "default", opts.agentId || "default",
+    ];
+
+    if (opts.confidence !== undefined) {
+      cols.push("confidence");
+      vals.push(opts.confidence);
+    }
+    if (opts.createdAt) {
+      cols.push("created_at");
+      vals.push(opts.createdAt);
+    }
+
+    const placeholders = vals.map((_, i) => i === 3 ? `$${i + 1}::vector` : `$${i + 1}`).join(", ");
     const result = await txQuery<{ id: string }>(
-      hasConfidence
-        ? `INSERT INTO memories (type, title, content, embedding, tags, importance, confidence, source, expires_at, profile, project_path, temporal_ref, user_id, agent_id)
-           VALUES ($1, $2, $3, $4::vector, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-           RETURNING id`
-        : `INSERT INTO memories (type, title, content, embedding, tags, importance, source, expires_at, profile, project_path, temporal_ref, user_id, agent_id)
-           VALUES ($1, $2, $3, $4::vector, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-           RETURNING id`,
-      hasConfidence
-        ? [
-            opts.type, opts.title, opts.content, pgVector(vec),
-            opts.tags || [], opts.importance ?? 0.5, opts.confidence,
-            opts.source || "manual", expiresAt,
-            opts.profile || "global", opts.projectPath || null,
-            opts.temporalRef || null, opts.userId || "default", opts.agentId || "default",
-          ]
-        : [
-            opts.type, opts.title, opts.content, pgVector(vec),
-            opts.tags || [], opts.importance ?? 0.5,
-            opts.source || "manual", expiresAt,
-            opts.profile || "global", opts.projectPath || null,
-            opts.temporalRef || null, opts.userId || "default", opts.agentId || "default",
-          ]
+      `INSERT INTO memories (${cols.join(", ")}) VALUES (${placeholders}) RETURNING id`,
+      vals
     );
 
     const memoryId = result.rows[0].id;

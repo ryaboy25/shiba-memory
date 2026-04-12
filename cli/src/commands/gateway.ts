@@ -41,6 +41,8 @@ const RememberSchema = z.object({
   project_path: z.string().max(500).optional(),
   user_id: z.string().max(100).default("default"),
   agent_id: z.string().max(100).default("default"),
+  created_at: z.string().datetime().optional(),   // Override created_at for temporal ordering
+  temporal_ref: z.string().datetime().optional(),  // What time period this memory refers to
   extract: z.boolean().default(false), // Auto-extract facts from content before storing
   auto_importance: z.boolean().default(false), // Auto-estimate importance via LLM/heuristic
 });
@@ -310,6 +312,8 @@ function createApp() {
       expiresIn: body.expires_in,
       profile: body.profile,
       projectPath: body.project_path,
+      temporalRef: body.temporal_ref,
+      createdAt: body.created_at,
       userId: body.user_id,
       agentId: body.agent_id,
     });

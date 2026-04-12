@@ -104,11 +104,12 @@ temporal AS (
 ),
 
 -- Channel 4: Entity graph — fuzzy match on canonical_name + aliases
--- Uses all significant words from query, not just first 2
-entity_graph AS (
-    SELECT DISTINCT ON (m.id)
+-- Deduplicate by memory ID first, then rank
+entity_graph_raw AS (
+    SELECT DISTINCT
         m.id,
-        ROW_NUMBER() OVER (ORDER BY similarity(e.canonical_name, query_text) DESC, m.created_at DESC) AS rank
+        MAX(similarity(e.canonical_name, query_text)) AS best_sim,
+        MIN(m.created_at) AS created_at
     FROM memories m
     JOIN base_filter bf ON bf.id = m.id
     JOIN memory_entities me ON me.memory_id = m.id
@@ -120,7 +121,12 @@ entity_graph AS (
            WHERE similarity(alias, query_text) > 0.2
               OR alias ILIKE '%' || query_text || '%'
        )
+    GROUP BY m.id
     LIMIT match_count * 3
+),
+entity_graph AS (
+    SELECT id, ROW_NUMBER() OVER (ORDER BY best_sim DESC, created_at DESC) AS rank
+    FROM entity_graph_raw
 ),
 
 -- Channel 5: Substring/exact match for short keyword queries only

@@ -100,6 +100,10 @@ class ShibaGatewayAdapter:
                 "auto_importance": False,  # Skip LLM importance to save time
             }
 
+            # Pass through created_at for temporal ordering
+            if item.created_at:
+                body["created_at"] = item.created_at
+
             try:
                 self._post("/remember", body)
             except Exception:
