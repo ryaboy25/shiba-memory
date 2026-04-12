@@ -71,7 +71,10 @@ def llm_chat(prompt, max_tokens=200):
     resp = httpx.post(
         f"{LLAMA_ENDPOINT}/v1/chat/completions",
         json={
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": [
+                {"role": "system", "content": "Respond directly with the answer. Do not think step by step. Do not use bullet points. Be concise."},
+                {"role": "user", "content": prompt},
+            ],
             "max_tokens": max_tokens,
             "temperature": 0.1,
         },
@@ -86,9 +89,9 @@ def llm_chat(prompt, max_tokens=200):
         # Try channel format first
         if "<channel|>" in reasoning:
             content = reasoning.split("<channel|>")[-1].strip()
-        # Extract actual answer from reasoning chain (not the full chain)
+        # Use full reasoning as fallback
         elif reasoning.strip():
-            content = extract_answer_from_reasoning(reasoning)
+            content = reasoning.strip()
     return content.strip()
 
 
