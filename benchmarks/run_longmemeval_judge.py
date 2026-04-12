@@ -8,14 +8,23 @@ to generate answers from recalled context, then judge correctness.
 This produces scores comparable to Mem0, Zep, and Honcho benchmarks.
 
 Pipeline:
-  1. Recall top-5 chunks from Shiba
-  2. Feed chunks + question to Gemma 4 → generate answer
-  3. Feed question + expected answer + generated answer to Gemma 4 → judge correctness
+  1. Ingest with overlapping 3-turn windows (not individual turns)
+  2. Recall with iterative multi-hop retrieval + query expansion
+  3. Feed chunks + question to Gemma 4 → generate answer
+  4. Feed question + expected answer + generated answer to Gemma 4 → judge correctness
+
+Optimizations over v1:
+  - Overlapping window ingestion captures conversational context
+  - Iterative retrieval: first pass → extract key terms → second pass
+  - Query expansion: generate 2 reformulations for broader coverage
+  - Higher top_k (15) with deduplication
+  - Confidence set to 0.95 for all benchmark data
 """
 
 import sys
 import json
 import time
+import re
 sys.path.insert(0, ".")
 
 import httpx
@@ -71,9 +80,9 @@ def llm_chat_raw(prompt, max_tokens=200):
 
 
 def generate_answer(question, context_chunks):
-    """Use LLM to answer a question given recalled context. (Phase 4A)"""
-    context = "\n\n".join(f"[Memory {i+1}] {chunk}" for i, chunk in enumerate(context_chunks[:10]))
-    prompt = f"""Answer the question based on the context below. Always attempt an answer even if uncertain. Be concise (1-2 sentences).
+    """Use LLM to answer a question given recalled context."""
+    context = "\n\n".join(f"[Memory {i+1}] {chunk}" for i, chunk in enumerate(context_chunks[:15]))
+    prompt = f"""Answer the question based ONLY on the context below. If the context contains the answer, state it clearly and concisely (1-2 sentences). If the context does not contain enough information, say "I don't have enough information" but still attempt a best guess.
 
 Context:
 {context}
@@ -84,7 +93,7 @@ Answer:"""
 
 
 def judge_answer(question, expected, generated):
-    """Use LLM to judge if the generated answer matches the expected answer. (Phase 4B)"""
+    """Use LLM to judge if the generated answer matches the expected answer."""
     prompt = f"""You are an evaluation judge. Determine if the Generated Answer correctly answers the Question, compared to the Expected Answer.
 Consider the answer correct if it contains the essential information from the Expected Answer, even if worded differently. Minor details may differ.
 Reply with ONLY "correct" or "incorrect".
@@ -106,7 +115,6 @@ Verdict:"""
         return False
 
     # Look for conclusion patterns in reasoning
-    # Gemma often says "the answer is correct" or "this is incorrect" in its thinking
     conclusion_patterns_correct = [
         "the answer is correct",
         "is correct",
@@ -145,6 +153,105 @@ Verdict:"""
     incorrect_count = result_lower.count("incorrect")
     correct_count = result_lower.count("correct") - incorrect_count
     return correct_count > incorrect_count
+
+
+def expand_query(question):
+    """Generate query reformulations for broader retrieval coverage.
+    Uses simple heuristics — no LLM needed."""
+    expansions = [question]  # Always include original
+
+    q_lower = question.lower().strip()
+
+    # Strip question framing to get core query
+    # "What is my dog's name?" → "dog's name" / "my dog name"
+    core = re.sub(r'^(what|who|where|when|how|which|do|did|does|is|are|was|were|have|has|had|can|could|would|should)\s+(is|are|was|were|do|does|did|has|have|had)?\s*', '', q_lower, flags=re.IGNORECASE).strip()
+    core = re.sub(r'\?$', '', core).strip()
+    if core and core != q_lower.rstrip('?') and len(core) > 5:
+        expansions.append(core)
+
+    # Convert questions to statements
+    # "What restaurant did I recommend?" → "I recommended a restaurant"
+    # "Where do I work?" → "I work at"
+    statement_patterns = [
+        (r'what (?:is|are|was|were) (?:my|the) (.+)\??', r'\1'),
+        (r'what (.+) (?:do|did|does|have|has) (?:i|we|you) (.+)\??', r'\2 \1'),
+        (r'where (?:do|did|does) (?:i|we) (.+)\??', r'I \1 at'),
+        (r'who (?:is|are|was) (.+)\??', r'\1'),
+        (r'when (?:did|do|does) (?:i|we) (.+)\??', r'I \1'),
+        (r"(?:do|did|does) (?:i|we) (?:have|own|like|prefer|want|use|need) (.+)\??", r"I have \1"),
+    ]
+    for pattern, replacement in statement_patterns:
+        match = re.match(pattern, q_lower)
+        if match:
+            try:
+                statement = re.sub(pattern, replacement, q_lower).strip().rstrip('?')
+                if statement and statement not in expansions:
+                    expansions.append(statement)
+            except Exception:
+                pass
+            break
+
+    return expansions[:3]  # Max 3 variants
+
+
+def iterative_recall(adapter, question, namespace, top_k=15):
+    """Multi-pass retrieval: first pass → extract key terms → second pass → merge.
+    This is what separates 50% systems from 90% systems."""
+
+    seen_ids = set()
+    all_results = []
+
+    # Pass 1: Direct query with expansions
+    expansions = expand_query(question)
+    for q in expansions:
+        try:
+            recalled = adapter.recall(
+                RecallQuery(query=q, top_k=top_k),
+                namespace=namespace,
+            )
+            for r in recalled:
+                if r.document_id not in seen_ids:
+                    seen_ids.add(r.document_id)
+                    all_results.append(r)
+        except Exception:
+            pass
+
+    # Pass 2: Extract key entities/terms from first pass results and re-query
+    if all_results:
+        # Collect unique terms from top results
+        top_content = " ".join(r.content[:200] for r in all_results[:5])
+
+        # Extract potential entity names (capitalized words, quoted strings, names)
+        entities = set()
+        # Capitalized multi-word names (e.g., "New York", "John Smith")
+        for match in re.finditer(r'[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+', top_content):
+            entities.add(match.group())
+        # Single capitalized words that aren't sentence starters
+        for match in re.finditer(r'(?<=[.!?]\s)[A-Z][a-z]+|(?<=\[)\w+(?=\])', top_content):
+            name = match.group()
+            if len(name) > 2 and name.lower() not in {'the', 'this', 'that', 'what', 'when', 'where', 'user', 'assistant', 'session', 'summary'}:
+                entities.add(name)
+        # Quoted strings
+        for match in re.finditer(r'"([^"]{2,30})"', top_content):
+            entities.add(match.group(1))
+
+        # Re-query with extracted entities
+        for entity in list(entities)[:3]:
+            try:
+                recalled = adapter.recall(
+                    RecallQuery(query=entity, top_k=5),
+                    namespace=namespace,
+                )
+                for r in recalled:
+                    if r.document_id not in seen_ids:
+                        seen_ids.add(r.document_id)
+                        all_results.append(r)
+            except Exception:
+                pass
+
+    # Sort by score, return top_k
+    all_results.sort(key=lambda r: r.score, reverse=True)
+    return all_results[:top_k]
 
 
 def run():
@@ -199,50 +306,73 @@ def run():
         namespace = f"lme-{sid}"
         adapter.cleanup(namespace=namespace)
 
-        # Ingest conversation sessions with temporal ordering + session awareness
+        # ── Ingest with overlapping windows ──────────────────
         sessions = data["sessions"]
         total_sessions = len(sessions)
         for sess_idx, session in enumerate(sessions):
             if not session:
                 continue
 
-            # Phase 2B: Set created_at so earlier sessions have older timestamps
-            # This creates a temporal gradient for recency-based scoring
+            # Temporal ordering: earlier sessions get older timestamps
             from datetime import datetime, timedelta, timezone
             base_time = datetime.now(timezone.utc) - timedelta(days=(total_sessions - sess_idx))
             created_at_str = base_time.isoformat()
 
-            session_texts = []
+            # Collect all turns for this session
+            turns = []
             for turn in session:
                 if isinstance(turn, dict) and turn.get("content"):
                     role = turn.get("role", "unknown")
-                    content = f"[{role}] {turn['content']}"
-                    session_texts.append(content)
+                    turns.append(f"[{role}] {turn['content']}")
+
+            # Strategy 1: Individual turns (for exact match retrieval)
+            for i, turn_text in enumerate(turns):
+                adapter.ingest(
+                    [IngestItem(
+                        content=turn_text,
+                        metadata={
+                            "title": f"Session {sess_idx} turn {i}",
+                            "type": "episode",
+                            "tags": [f"session-{sess_idx}"],
+                        },
+                        created_at=created_at_str,
+                    )],
+                    namespace=namespace,
+                )
+
+            # Strategy 2: Overlapping 3-turn windows (for context-aware retrieval)
+            # This captures conversational flow that single turns miss.
+            # "What did you recommend?" needs the Q+A pair, not just the A.
+            window_size = 3
+            stride = 2  # overlap of 1 turn
+            for i in range(0, len(turns), stride):
+                window = turns[i:i + window_size]
+                if len(window) >= 2:  # Need at least 2 turns for a meaningful window
+                    window_text = "\n".join(window)
                     adapter.ingest(
                         [IngestItem(
-                            content=content,
+                            content=window_text,
                             metadata={
-                                "title": f"Session {sess_idx} - {role}",
+                                "title": f"Session {sess_idx} window {i//stride}",
                                 "type": "episode",
-                                "role": role,  # Phase 1A: pass role for confidence scoring
-                                "tags": [f"session-{sess_idx}"],  # Phase 3B: session tags
+                                "importance": 0.7,
+                                "tags": [f"session-{sess_idx}", "window"],
                             },
-                            created_at=created_at_str,  # Phase 2B: temporal ordering
+                            created_at=created_at_str,
                         )],
                         namespace=namespace,
                     )
 
-            # Phase 3A: Store session summary for multi-session retrieval
-            if session_texts:
-                summary = " ".join(session_texts)[:500]
+            # Strategy 3: Full session summary (for high-level questions)
+            if turns:
+                summary = "\n".join(turns)[:1000]
                 adapter.ingest(
                     [IngestItem(
-                        content=f"[Session {sess_idx} summary] {summary}",
+                        content=f"[Session {sess_idx} full transcript] {summary}",
                         metadata={
                             "title": f"Session {sess_idx} summary",
                             "type": "episode",
-                            "importance": 0.7,
-                            "role": "summary",
+                            "importance": 0.8,
                             "tags": [f"session-{sess_idx}", "session-summary"],
                         },
                         created_at=created_at_str,
@@ -250,7 +380,7 @@ def run():
                     namespace=namespace,
                 )
 
-        # Answer questions with LLM
+        # ── Answer questions with iterative retrieval ────────
         for q in data["questions"]:
             question = q.get("question", "")
             answer = q.get("answer", "")
@@ -259,12 +389,9 @@ def run():
             if not question or not answer:
                 continue
 
-            # Step 1: Recall from Shiba (Phase 1C: top_k=10)
+            # Iterative multi-hop retrieval with query expansion
             start = time.time()
-            recalled = adapter.recall(
-                RecallQuery(query=question, top_k=10),
-                namespace=namespace,
-            )
+            recalled = iterative_recall(adapter, question, namespace, top_k=15)
             recall_time = time.time() - start
             results["latencies"].append(recall_time)
 
@@ -281,14 +408,14 @@ def run():
             if retrieval_hit:
                 results["retrieval_hits"] += 1
 
-            # Step 2: Generate answer using LLM
+            # Generate answer using LLM with retrieved context
             chunks = [r.content for r in recalled]
             try:
                 generated = generate_answer(question, chunks)
             except Exception as e:
                 generated = ""
 
-            # Step 3: Judge correctness
+            # Judge correctness
             judge_start = time.time()
             try:
                 is_correct = judge_answer(question, answer, generated)
@@ -315,7 +442,7 @@ def run():
             total = max(results["total"], 1)
             acc = results["correct"] / total * 100
             ret = results["retrieval_hits"] / total * 100
-            print(f"  [{processed}/{total_samples}] LLM-Judge: {acc:.1f}% | Raw Retrieval: {ret:.1f}%")
+            print(f"    [{processed}/{total_samples}] LLM-Judge: {acc:.1f}% | Raw Retrieval: {ret:.1f}%")
 
     adapter.close()
 

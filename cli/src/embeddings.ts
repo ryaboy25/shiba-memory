@@ -168,7 +168,7 @@ export async function embedBatch(texts: string[]): Promise<number[][]> {
 
   // TEI supports native batching
   if (PROVIDER === "tei") {
-    const url = process.env.SHB_TEI_URL || "http://localhost:8090";
+    const url = process.env.SHB_TEI_URL || "http://localhost:8080";
     try {
       const res = await fetch(`${url}/embed`, {
         method: "POST",

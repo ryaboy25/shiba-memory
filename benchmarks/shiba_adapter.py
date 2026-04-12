@@ -107,9 +107,10 @@ def embed(text: str) -> list[float]:
         return _embed_tei(text)
     if EMBEDDING_PROVIDER == "openai":
         return _embed_openai(text)
-    # Ollama: mxbai-embed-large has 512-token hard limit; pre-truncate
-    if len(text) > 1500:
-        text = text[:1500]
+    # Ollama: nomic-embed-text supports 8192 tokens; mxbai-embed-large is ~512.
+    # Use 4000 chars (~1000 tokens) as safe limit for most models.
+    if len(text) > 4000:
+        text = text[:4000]
     return _embed_ollama(text)
 
 
@@ -204,14 +205,10 @@ class ShibaAdapter:
 
             vec = embed(f"{title} {item.content}")
 
-            # Set confidence based on speaker role (Phase 1A)
-            role = item.metadata.get("role", "unknown")
-            if role == "user":
-                confidence = 0.9
-            elif role == "assistant":
-                confidence = 0.7
-            else:
-                confidence = 0.5
+            # All benchmark data gets high confidence — the confidence multiplier
+            # in scoped_recall multiplies base_score * confidence, so 0.5 halves
+            # the score for non-user turns, suppressing relevant results.
+            confidence = 0.95
 
             # Build INSERT with optional created_at override (Phase 2B)
             if item.created_at:
@@ -240,11 +237,8 @@ class ShibaAdapter:
                     ],
                 )
 
-            # Auto-link newly inserted memory
-            cur.execute("SELECT id FROM memories WHERE content = %s ORDER BY created_at DESC LIMIT 1", [item.content])
-            row = cur.fetchone()
-            if row:
-                cur.execute("SELECT auto_link_memory(%s)", [row[0]])
+            # Skip per-ingest auto_link_memory — it's O(n²) and the graph boost
+            # in scoped_recall is marginal. Auto-link in batch after ingestion if needed.
 
         cur.close()
 
