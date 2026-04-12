@@ -37,38 +37,45 @@ export async function decayMemories(): Promise<{
   };
 }
 
-/** Find near-duplicate memories using KNN lateral join (HNSW-accelerated, not O(n²)). */
+/** Find near-duplicate memories using KNN lateral join (HNSW-accelerated, not O(n²)).
+ *  Processes one type at a time to stay within statement timeout. */
 export async function findDuplicates(): Promise<
   { id1: string; id2: string; title1: string; title2: string; similarity: number }[]
 > {
-  const result = await query<{
-    id1: string;
-    id2: string;
-    title1: string;
-    title2: string;
-    similarity: number;
-  }>(
-    `SELECT a.id AS id1, b_match.id AS id2,
-            a.title AS title1, b_match.title AS title2,
-            b_match.similarity
-     FROM memories a,
-     LATERAL (
-       SELECT m.id, m.title,
-              1 - (m.embedding::halfvec(1024) <=> a.embedding::halfvec(1024)) AS similarity
-       FROM memories m
-       WHERE m.id > a.id
+  const types = await query<{ type: string }>(
+    `SELECT DISTINCT type FROM memories WHERE embedding IS NOT NULL`
+  );
+
+  const allDupes: { id1: string; id2: string; title1: string; title2: string; similarity: number }[] = [];
+
+  for (const { type } of types.rows) {
+    const result = await query<{
+      id1: string; id2: string; title1: string; title2: string; similarity: number;
+    }>(
+      `SELECT a.id AS id1, b_match.id AS id2,
+              a.title AS title1, b_match.title AS title2,
+              b_match.similarity
+       FROM memories a,
+       LATERAL (
+         SELECT m.id, m.title,
+                1 - (m.embedding::halfvec(1024) <=> a.embedding::halfvec(1024)) AS similarity
+         FROM memories m
+         WHERE m.id > a.id
          AND m.type = a.type
          AND m.embedding IS NOT NULL
        ORDER BY m.embedding::halfvec(1024) <=> a.embedding::halfvec(1024)
        LIMIT 3
      ) b_match
-     WHERE a.embedding IS NOT NULL
+     WHERE a.embedding IS NOT NULL AND a.type = $1
        AND b_match.similarity > 0.92
      ORDER BY b_match.similarity DESC
-     LIMIT 20`
-  );
+     LIMIT 20`,
+      [type]
+    );
+    allDupes.push(...result.rows);
+  }
 
-  return result.rows;
+  return allDupes;
 }
 
 // ─── Consolidation (the brain's "sleep") ──────────────────
@@ -85,61 +92,76 @@ export interface ConsolidationResult {
   hashes_cleaned: number;
 }
 
-/** Pass 1: Merge near-duplicate memories. */
+/** Pass 1: Merge near-duplicate memories — chunked by type to avoid statement timeout. */
 async function passMergeDuplicates(): Promise<number> {
-  return withTransaction(async (txQuery) => {
-    let merged = 0;
+  // Get distinct memory types to process one at a time
+  const types = await query<{ type: string }>(
+    `SELECT DISTINCT type FROM memories WHERE embedding IS NOT NULL`
+  );
 
-    const dupeResult = await txQuery<{
-      id1: string; id2: string; title1: string; title2: string; similarity: number;
-    }>(
-      `SELECT a.id AS id1, b_match.id AS id2,
-              a.title AS title1, b_match.title AS title2,
-              b_match.similarity
-       FROM memories a,
-       LATERAL (
-         SELECT m.id, m.title,
-                1 - (m.embedding::halfvec(1024) <=> a.embedding::halfvec(1024)) AS similarity
-         FROM memories m
-         WHERE m.id > a.id AND m.type = a.type AND m.embedding IS NOT NULL
-         ORDER BY m.embedding::halfvec(1024) <=> a.embedding::halfvec(1024)
-         LIMIT 3
-       ) b_match
-       WHERE a.embedding IS NOT NULL AND b_match.similarity > 0.92
-       ORDER BY b_match.similarity DESC LIMIT 20`
-    );
+  let totalMerged = 0;
 
-    for (const dupe of dupeResult.rows) {
-      const pair = await txQuery<{ id: string; confidence: number; content: string }>(
-        `SELECT id, confidence, content FROM memories WHERE id IN ($1, $2)`,
-        [dupe.id1, dupe.id2]
+  for (const { type } of types.rows) {
+    const merged = await withTransaction(async (txQuery) => {
+      let count = 0;
+
+      const dupeResult = await txQuery<{
+        id1: string; id2: string; title1: string; title2: string; similarity: number;
+      }>(
+        `SELECT a.id AS id1, b_match.id AS id2,
+                a.title AS title1, b_match.title AS title2,
+                b_match.similarity
+         FROM memories a,
+         LATERAL (
+           SELECT m.id, m.title,
+                  1 - (m.embedding::halfvec(1024) <=> a.embedding::halfvec(1024)) AS similarity
+           FROM memories m
+           WHERE m.id > a.id AND m.type = a.type AND m.embedding IS NOT NULL
+           ORDER BY m.embedding::halfvec(1024) <=> a.embedding::halfvec(1024)
+           LIMIT 3
+         ) b_match
+         WHERE a.embedding IS NOT NULL AND a.type = $1
+           AND b_match.similarity > 0.92
+         ORDER BY b_match.similarity DESC LIMIT 20`,
+        [type]
       );
 
-      if (pair.rows.length < 2) continue;
+      for (const dupe of dupeResult.rows) {
+        const pair = await txQuery<{ id: string; confidence: number; content: string }>(
+          `SELECT id, confidence, content FROM memories WHERE id IN ($1, $2)`,
+          [dupe.id1, dupe.id2]
+        );
 
-      const [keep, remove] = pair.rows[0].confidence >= pair.rows[1].confidence
-        ? [pair.rows[0], pair.rows[1]]
-        : [pair.rows[1], pair.rows[0]];
+        if (pair.rows.length < 2) continue;
 
-      await txQuery(
-        `INSERT INTO memory_links (source_id, target_id, relation, strength)
-         VALUES ($1::uuid, $2::uuid, 'supersedes'::relation_type, $3::float)
-         ON CONFLICT (source_id, target_id, relation) DO NOTHING`,
-        [keep.id, remove.id, dupe.similarity]
-      );
+        const [keep, remove] = pair.rows[0].confidence >= pair.rows[1].confidence
+          ? [pair.rows[0], pair.rows[1]]
+          : [pair.rows[1], pair.rows[0]];
 
-      await txQuery(`DELETE FROM memories WHERE id = $1`, [remove.id]);
+        await txQuery(
+          `INSERT INTO memory_links (source_id, target_id, relation, strength)
+           VALUES ($1::uuid, $2::uuid, 'supersedes'::relation_type, $3::float)
+           ON CONFLICT (source_id, target_id, relation) DO NOTHING`,
+          [keep.id, remove.id, dupe.similarity]
+        );
 
-      await txQuery(
-        `INSERT INTO consolidation_log (action, details) VALUES ('merged', $1)`,
-        [JSON.stringify({ kept: keep.id, removed: remove.id, similarity: dupe.similarity })]
-      );
+        await txQuery(`DELETE FROM memories WHERE id = $1`, [remove.id]);
 
-      merged++;
-    }
+        await txQuery(
+          `INSERT INTO consolidation_log (action, details) VALUES ('merged', $1)`,
+          [JSON.stringify({ kept: keep.id, removed: remove.id, similarity: dupe.similarity })]
+        );
 
-    return merged;
-  });
+        count++;
+      }
+
+      return count;
+    });
+
+    totalMerged += merged;
+  }
+
+  return totalMerged;
 }
 
 /** Pass 2: Detect contradictions (may call LLM — runs outside main transaction). */
