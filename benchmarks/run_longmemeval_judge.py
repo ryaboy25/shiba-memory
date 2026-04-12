@@ -72,17 +72,16 @@ def llm_chat_raw(prompt, max_tokens=200):
 
 
 def generate_answer(question, context_chunks):
-    """Use LLM to answer a question given recalled context.
-    Limit to top 5 most relevant chunks — more context confuses the LLM."""
-    context = "\n\n".join(f"[{i+1}] {chunk}" for i, chunk in enumerate(context_chunks[:5]))
-    prompt = f"""Based on the memories below, answer the question concisely (1-2 sentences max).
+    """Use LLM to answer a question given recalled context."""
+    context = "\n\n".join(f"[Memory {i+1}] {chunk}" for i, chunk in enumerate(context_chunks[:10]))
+    prompt = f"""Answer the question based on the context below. Always attempt an answer even if uncertain. Be concise (1-2 sentences).
 
-Memories:
+Context:
 {context}
 
 Question: {question}
 Answer:"""
-    return llm_chat(prompt, max_tokens=150)
+    return llm_chat(prompt, max_tokens=300)
 
 
 def judge_answer(question, expected, generated):
