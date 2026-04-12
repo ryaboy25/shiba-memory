@@ -103,6 +103,8 @@ async function passMergeDuplicates(): Promise<number> {
 
   for (const { type } of types.rows) {
     const merged = await withTransaction(async (txQuery) => {
+      // Extend timeout for heavy dedup scans
+      await txQuery(`SET LOCAL statement_timeout = '120s'`);
       let count = 0;
 
       const dupeResult = await txQuery<{
