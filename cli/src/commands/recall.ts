@@ -164,7 +164,8 @@ export async function recall(opts: RecallOptions & { skipTouch?: boolean } = { q
   }
 
   // Multi-hop graph traversal: find related memories via knowledge graph links
-  if (rows.length > 0 && rows.length < limit) {
+  // Only when explicitly requested — auto-linked benchmark data has too much noise
+  if (opts.expandContext && rows.length > 0 && rows.length < limit) {
     try {
       const topIds = rows.slice(0, 3).map((r: Memory) => r.id);
       const graphResults = await query<Memory>(
