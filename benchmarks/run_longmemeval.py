@@ -236,13 +236,14 @@ def run():
             results["latencies"].append(latency)
 
             # Check if answer appears in recalled content
+            # Strip quotes from answer — LongMemEval wraps answers in literal quotes
             recalled_text = " ".join(r.content for r in recalled).lower()
-            answer_lower = answer.lower().strip()
+            answer_clean = answer.strip().strip("\"'").strip().lower()
 
-            if len(answer_lower) < 50:
-                hit = answer_lower in recalled_text
+            if len(answer_clean) < 50:
+                hit = answer_clean in recalled_text
             else:
-                answer_words = set(answer_lower.split())
+                answer_words = set(answer_clean.split())
                 found = sum(1 for w in answer_words if w in recalled_text)
                 hit = found / max(len(answer_words), 1) >= 0.6
 

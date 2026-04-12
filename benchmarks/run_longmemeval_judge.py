@@ -396,12 +396,13 @@ def run():
             results["latencies"].append(recall_time)
 
             # Check raw retrieval hit
+            # Strip quotes from answer — LongMemEval wraps answers in literal quotes
             recalled_text = " ".join(r.content for r in recalled).lower()
-            answer_lower = answer.lower().strip()
-            if len(answer_lower) < 50:
-                retrieval_hit = answer_lower in recalled_text
+            answer_clean = answer.strip().strip("\"'").strip().lower()
+            if len(answer_clean) < 50:
+                retrieval_hit = answer_clean in recalled_text
             else:
-                answer_words = set(answer_lower.split())
+                answer_words = set(answer_clean.split())
                 found = sum(1 for w in answer_words if w in recalled_text)
                 retrieval_hit = found / max(len(answer_words), 1) >= 0.6
 
