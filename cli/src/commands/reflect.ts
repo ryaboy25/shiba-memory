@@ -406,19 +406,28 @@ export async function consolidate(): Promise<ConsolidationResult> {
     hashes_cleaned: 0,
   };
 
-  // Each pass is an independent transaction — no more holding one giant lock.
-  result.merged = await passMergeDuplicates();
-  result.contradictions = await passDetectContradictions();
+  // Each pass is independent — failures in one don't block others.
+  try { result.merged = await passMergeDuplicates(); }
+  catch (e) { console.error("consolidate: passMergeDuplicates failed:", (e as Error).message); }
 
-  const decayExpire = await passDecayAndExpire();
-  result.decayed = decayExpire.decayed;
-  result.expired = decayExpire.expired;
+  try { result.contradictions = await passDetectContradictions(); }
+  catch (e) { console.error("consolidate: passDetectContradictions failed:", (e as Error).message); }
 
-  result.linked = await passAutoLink();
-  result.insights = await passCrossProjectInsights();
+  try {
+    const decayExpire = await passDecayAndExpire();
+    result.decayed = decayExpire.decayed;
+    result.expired = decayExpire.expired;
+  } catch (e) { console.error("consolidate: passDecayAndExpire failed:", (e as Error).message); }
+
+  try { result.linked = await passAutoLink(); }
+  catch (e) { console.error("consolidate: passAutoLink failed:", (e as Error).message); }
+
+  try { result.insights = await passCrossProjectInsights(); }
+  catch (e) { console.error("consolidate: passCrossProjectInsights failed:", (e as Error).message); }
 
   // Agentic reflect (LLM-based quality review)
-  await passAgenticReflect();
+  try { await passAgenticReflect(); }
+  catch (e) { console.error("consolidate: passAgenticReflect failed:", (e as Error).message); }
 
   // Clean up feedback loop prevention hashes
   try {
