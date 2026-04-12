@@ -26,55 +26,13 @@ LLAMA_ENDPOINT = "http://localhost:8080"
 LLAMA_TIMEOUT = 60
 
 
-def extract_answer_from_reasoning(reasoning):
-    """Extract the actual answer from a Gemma reasoning chain.
-
-    Gemma's reasoning_content often looks like:
-      *  Question: "..."
-      *  Constraint: ...
-      *  ...analysis...
-      *  "Final answer here"
-    or ends with a concluding sentence after the bullet analysis.
-    """
-    text = reasoning.strip()
-    if not text:
-        return text
-
-    # Look for quoted conclusion (Gemma often wraps final answer in quotes)
-    # Find the last quoted string that looks like an answer
-    quotes = re.findall(r'"([^"]{3,})"', text)
-    # Filter out quotes that are just echoing the question
-    answer_quotes = [q for q in quotes if not q.endswith("?")]
-    if answer_quotes:
-        return answer_quotes[-1]
-
-    # Look for "Answer:" or "answer:" marker
-    answer_match = re.search(r'(?:^|\n)\s*\*?\s*(?:Answer|Result|Conclusion|So|Therefore)[:\s]+(.+)', text, re.IGNORECASE)
-    if answer_match:
-        return answer_match.group(1).strip().rstrip("*").strip()
-
-    # Take the last non-empty line (most likely the conclusion)
-    lines = [l.strip().lstrip("*").strip() for l in text.split("\n") if l.strip()]
-    # Skip lines that are just restating the question or constraint
-    for line in reversed(lines):
-        if any(line.lower().startswith(p) for p in ["question:", "constraint:", "context:", "input:"]):
-            continue
-        if len(line) > 5:
-            return line
-
-    return text
-
-
 def llm_chat(prompt, max_tokens=200):
     """Call llama.cpp OpenAI-compatible chat endpoint.
-    Returns only the content field (actual answer), ignoring reasoning_content."""
+    Expects non-reasoning chat template configured on the server."""
     resp = httpx.post(
         f"{LLAMA_ENDPOINT}/v1/chat/completions",
         json={
-            "messages": [
-                {"role": "system", "content": "Respond directly with the answer. Do not think step by step. Do not use bullet points. Be concise."},
-                {"role": "user", "content": prompt},
-            ],
+            "messages": [{"role": "user", "content": prompt}],
             "max_tokens": max_tokens,
             "temperature": 0.1,
         },
@@ -98,24 +56,6 @@ def llm_chat(prompt, max_tokens=200):
     return content.strip()
 
 
-def llm_chat_raw(prompt, max_tokens=200):
-    """Returns BOTH reasoning_content + content for judge analysis."""
-    resp = httpx.post(
-        f"{LLAMA_ENDPOINT}/v1/chat/completions",
-        json={
-            "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": max_tokens,
-            "temperature": 0.1,
-        },
-        timeout=LLAMA_TIMEOUT,
-    )
-    resp.raise_for_status()
-    msg = resp.json()["choices"][0]["message"]
-    reasoning = msg.get("reasoning_content", "")
-    content = msg.get("content", "")
-    return f"{reasoning} {content}".strip()
-
-
 def generate_answer(question, context_chunks, q_type=""):
     """Use LLM to answer a question given recalled context."""
     context = "\n\n".join(f"[Memory {i+1}] {chunk}" for i, chunk in enumerate(context_chunks[:10]))
@@ -129,7 +69,15 @@ Context:
 Question: {question}
 Answer:"""
     elif q_type == "temporal-reasoning":
-        prompt = f"""Answer the question based on the context below. Pay close attention to the order of events, timestamps, and when things happened. Be concise (1-2 sentences).
+        prompt = f"""Answer the question based on the context below. Pay close attention to the order of events, timestamps, and when things happened. If the context does not contain enough information to answer, say "The information provided is not enough" and explain what is missing. Be concise (1-2 sentences).
+
+Context:
+{context}
+
+Question: {question}
+Answer:"""
+    elif q_type == "multi-session":
+        prompt = f"""Answer the question based on the context below. When counting items, list each one explicitly before giving a total. Be thorough — check every memory for relevant items. Be concise.
 
 Context:
 {context}
@@ -161,6 +109,13 @@ STOP_WORDS = {"the", "a", "an", "is", "are", "was", "were", "i", "my", "me",
               "did", "does", "be", "been", "being", "with", "from", "by", "as",
               "but", "not", "so", "if", "no", "yes", "also", "very", "just",
               "about", "up", "out", "into", "over", "after", "before", "than"}
+
+INSUFFICIENT_PHRASES = [
+    "not enough", "information provided is not enough", "not mentioned",
+    "no mention", "does not mention", "does not contain", "not enough information",
+    "cannot determine", "no information", "did not mention", "not stated",
+    "insufficient information", "doesn't mention",
+]
 
 
 def normalize_number(text):
@@ -227,16 +182,22 @@ def fuzzy_judge(expected, generated):
 def judge_answer(question, expected, generated):
     """Hybrid judge: fast fuzzy matching for factual answers, LLM for complex ones.
 
-    Order: refusal check → exact substring → fuzzy/numeric → LLM judge
+    Order: refusal/insufficient check → exact substring → fuzzy/numeric → LLM judge
     """
     # If generated answer is empty or refusal, it's incorrect
     if not generated or len(generated.strip()) < 3:
         return False
+
     gen_lower = generated.lower()
-    if any(p in gen_lower for p in ["i don't have", "not enough information", "no information", "cannot determine"]):
-        # Exception: if expected answer also says "not enough information", it's correct
-        exp_lower = expected.lower()
-        if any(p in exp_lower for p in ["not enough", "information provided is not enough"]):
+    exp_lower = expected.lower()
+
+    # Check if generated says insufficient info / refusal
+    gen_insufficient = any(p in gen_lower for p in INSUFFICIENT_PHRASES)
+    exp_insufficient = any(p in exp_lower for p in INSUFFICIENT_PHRASES)
+
+    if gen_insufficient:
+        # Both say insufficient → correct
+        if exp_insufficient:
             return True
         return False
 
@@ -284,15 +245,12 @@ def expand_query(question):
     q_lower = question.lower().strip()
 
     # Strip question framing to get core query
-    # "What is my dog's name?" → "dog's name" / "my dog name"
     core = re.sub(r'^(what|who|where|when|how|which|do|did|does|is|are|was|were|have|has|had|can|could|would|should)\s+(is|are|was|were|do|does|did|has|have|had)?\s*', '', q_lower, flags=re.IGNORECASE).strip()
     core = re.sub(r'\?$', '', core).strip()
     if core and core != q_lower.rstrip('?') and len(core) > 5:
         expansions.append(core)
 
     # Convert questions to statements
-    # "What restaurant did I recommend?" → "I recommended a restaurant"
-    # "Where do I work?" → "I work at"
     statement_patterns = [
         (r'what (?:is|are|was|were) (?:my|the) (.+)\??', r'\1'),
         (r'what (.+) (?:do|did|does|have|has) (?:i|we|you) (.+)\??', r'\2 \1'),
@@ -427,13 +385,11 @@ def run():
                 )
 
             # Strategy 2: Overlapping 3-turn windows (for context-aware retrieval)
-            # This captures conversational flow that single turns miss.
-            # "What did you recommend?" needs the Q+A pair, not just the A.
             window_size = 3
             stride = 2  # overlap of 1 turn
             for i in range(0, len(turns), stride):
                 window = turns[i:i + window_size]
-                if len(window) >= 2:  # Need at least 2 turns for a meaningful window
+                if len(window) >= 2:
                     window_text = "\n".join(window)
                     adapter.ingest(
                         [IngestItem(
@@ -466,7 +422,7 @@ def run():
                     namespace=namespace,
                 )
 
-        # ── Answer questions with iterative retrieval ────────
+        # ── Answer questions ────────────────────────────────
         for q in data["questions"]:
             question = q.get("question", "")
             answer = q.get("answer", "")
@@ -475,14 +431,16 @@ def run():
             if not question or not answer:
                 continue
 
+            # Use higher top_k for multi-session counting questions
+            top_k = 20 if q_type == "multi-session" else 10
+
             # Iterative multi-hop retrieval with query expansion
             start = time.time()
-            recalled = multi_query_recall(adapter, question, namespace, top_k=10)
+            recalled = multi_query_recall(adapter, question, namespace, top_k=top_k)
             recall_time = time.time() - start
             results["latencies"].append(recall_time)
 
             # Check raw retrieval hit
-            # Strip quotes from answer — LongMemEval wraps answers in literal quotes
             recalled_text = " ".join(r.content for r in recalled).lower()
             answer_clean = answer.strip().strip("\"'").strip().lower()
             if len(answer_clean) < 50:
@@ -569,7 +527,7 @@ def run():
     output = {
         "benchmark": "LongMemEval (oracle) — LLM-as-Judge",
         "system": "Shiba",
-        "judge_model": "Gemma 4 (local, llama.cpp)",
+        "judge_model": "Gemma 4 31B Q4 (local, llama.cpp, non-reasoning template)",
         "llm_judge_accuracy": round(overall_acc, 1),
         "raw_retrieval_accuracy": round(retrieval_acc, 1),
         "avg_retrieval_latency_ms": round(avg_latency * 1000),

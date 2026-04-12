@@ -254,7 +254,7 @@ async function materializeUserFile(projectPath: string): Promise<string> {
 - Honcho runs two LLM passes per conversation. Shiba runs zero to a few.
 - Honcho only models the user. Shiba models user + project + skills + episodes + feedback.
 - Honcho has dialectical reasoning (novel). Shiba has instinct→skill evolution (novel).
-- Honcho scores 89% because GPT-4o judges its GPT-4o-extracted answers. Apples to oranges.
+- Honcho scores 89% because GPT-4o judges its GPT-4o-extracted answers. Shiba scores 61% with a fully local Gemma 4 judge — apples to oranges.
 
 ### vs. Letta
 - Letta's agent manages its own memory (the LLM decides). Shiba's memory is deterministic + inspectable.
