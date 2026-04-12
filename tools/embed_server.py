@@ -9,7 +9,7 @@ MODEL_ID = os.getenv("EMBED_MODEL", "mixedbread-ai/mxbai-embed-large-v1")
 DEVICE = "cuda:0" if torch.cuda.is_available() else "cpu"
 
 print(f"Loading {MODEL_ID} on {DEVICE} (visible GPUs: {os.getenv('CUDA_VISIBLE_DEVICES', 'all')})...")
-model = SentenceTransformer(MODEL_ID, device=DEVICE)
+model = SentenceTransformer(MODEL_ID, device=DEVICE, trust_remote_code=True)
 print(f"Ready! Embedding dim: {model.get_sentence_embedding_dimension()}")
 
 app = FastAPI()

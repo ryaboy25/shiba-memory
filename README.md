@@ -72,7 +72,7 @@ _HaluMem-Medium: 20 users, 12,300 memory points, 2,648 interference points. Full
 
 - **Docker** (for PostgreSQL + pgvector)
 - **Node.js 18+**
-- **Ollama** with `nomic-embed-text` model (for local embeddings, free)
+- **An embedding provider** (see options below)
 
 ### Install
 
@@ -96,11 +96,43 @@ node dist/index.js setup
 node dist/index.js gateway start
 ```
 
-### Install Ollama (if not already installed)
+### Embedding Providers
+
+Choose one. All produce vectors stored in PostgreSQL with pgvector.
+
+#### Option 1: Ollama (easiest, no GPU required)
 
 ```bash
 curl -fsSL https://ollama.com/install.sh | sh
 ollama pull nomic-embed-text
+```
+
+Default config — works out of the box. `nomic-embed-text` has 8192-token context (no truncation issues) and 768 dims (padded to 1024).
+
+#### Option 2: Sentence-Transformers Server (best quality, GPU recommended)
+
+```bash
+pip install sentence-transformers fastapi uvicorn
+CUDA_VISIBLE_DEVICES=0 uvicorn tools.embed_server:app --port 8090 &
+```
+
+Then set in `.env`:
+```
+SHB_EMBEDDING_PROVIDER=tei
+SHB_TEI_URL=http://localhost:8090
+```
+
+Uses `mxbai-embed-large-v1` by default (1024 native dims). GPU-accelerated, handles long texts natively via sentence-transformers tokenization, and supports batching. The `embed_server.py` script is a lightweight FastAPI wrapper (~25 lines).
+
+**Note:** If using HuggingFace TEI Docker instead, your GPU must have a compatible compute capability (Ampere 8.x works, Blackwell 12.x does not yet). The sentence-transformers server works with any GPU that PyTorch supports.
+
+#### Option 3: OpenAI API (no local GPU needed)
+
+Set in `.env`:
+```
+SHB_EMBEDDING_PROVIDER=openai
+SHB_OPENAI_API_KEY=sk-...
+SHB_OPENAI_MODEL=text-embedding-3-small
 ```
 
 ### Verify
@@ -443,11 +475,14 @@ shiba setup                # interactive setup wizard
 
 ### Hybrid Search Scoring
 
-Two search arms run in parallel:
-1. **Semantic**: pgvector cosine similarity on halfvec(512)
+Five retrieval channels fused via Reciprocal Rank Fusion (RRF):
+1. **Semantic**: pgvector cosine similarity on halfvec(1024) HNSW index
 2. **Full-text**: PostgreSQL websearch_to_tsquery on a generated tsvector column
+3. **Temporal**: Date-range filtering for time-based queries
+4. **Entity graph**: Memory-entity relationships for entity-focused queries
+5. **Substring match**: ILIKE fallback for exact keyword matches
 
-Results are fused with configurable weights (default 70% semantic, 30% keyword), then scored with:
+Each channel ranks results independently, then RRF combines them: `score = SUM(1/(60+rank))`. Final scoring applies:
 
 ```
 final_score = base_score
@@ -481,7 +516,7 @@ The brain gets smarter over time:
 
 ### Halfvec Optimization
 
-Embeddings are stored at full 32-bit precision but indexed as 16-bit halfvec. The HNSW index uses half the memory with negligible accuracy loss — verified across 512 dimensions with nomic-embed-text.
+Embeddings are stored at full 32-bit precision but indexed as 16-bit halfvec. The HNSW index uses half the memory with negligible accuracy loss — verified across 1024 dimensions with mxbai-embed-large-v1.
 
 ## Benchmarks
 
@@ -534,7 +569,7 @@ The benchmark adapter (`benchmarks/shiba_adapter.py`) implements a standard inte
 
 ## Configuration
 
-Copy `.env.example` to `.env` and configure:
+Copy `.env.example` to `.env` and customize. See `.env.example` for all available options with detailed comments. Key settings:
 
 ```bash
 # Database
@@ -544,14 +579,15 @@ SHB_DB_NAME=shb
 SHB_DB_USER=shb
 SHB_DB_PASSWORD=shb_dev_password
 
-# Embedding provider: ollama (local, free) or openai (cloud, paid)
+# Embedding provider: 'ollama' (default), 'tei', or 'openai'
 SHB_EMBEDDING_PROVIDER=ollama
-SHB_OLLAMA_URL=http://localhost:11434
-SHB_OLLAMA_MODEL=nomic-embed-text
+SHB_EMBED_DIMENSIONS=1024
+
+# LLM provider for extraction: 'openai-compatible', 'ollama', 'anthropic', 'none'
+SHB_LLM_PROVIDER=none
 
 # Gateway
 SHB_GATEWAY_PORT=18789
-SHB_GATEWAY_HOST=0.0.0.0
 SHB_API_KEY=your-secret-key
 ```
 
@@ -571,7 +607,8 @@ shiba-memory/
   cli/src/
     index.ts                      # CLI entry (50+ commands)
     db.ts                         # PostgreSQL pool + withTransaction helper
-    embeddings.ts                 # Ollama / OpenAI / hashtest providers
+    embeddings.ts                 # Ollama / TEI / OpenAI / hashtest providers
+    llm.ts                        # LLM provider layer (openai-compatible, ollama, anthropic, none)
     commands/
       remember.ts                 # Store with embedding + auto-link
       recall.ts                   # Scoped hybrid search
@@ -607,6 +644,10 @@ shiba-memory/
       hash.ts                     # SHA-256
       chunker.ts                  # Text chunking
       project.ts                  # Git root detection
+  tools/
+    embed_server.py               # Lightweight GPU embedding server (sentence-transformers + FastAPI)
+    import_claude_to_shiba.py     # Import Claude conversation exports
+    reextract_facts.py            # Batch re-extraction of facts from episodes
   benchmarks/
     shiba_adapter.py              # Benchmark adapter for LongMemEval/LoCoMo
     run_longmemeval.py            # Raw retrieval benchmark
@@ -615,6 +656,8 @@ shiba-memory/
     pyproject.toml                # Python dependencies
   plugins/
     hermes/                       # Hermes agent memory provider plugin
+  sdks/
+    python/                       # Python SDK (pip install shiba-memory)
 ```
 
 ## Inspired By
