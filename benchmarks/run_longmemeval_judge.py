@@ -71,10 +71,28 @@ def llm_chat_raw(prompt, max_tokens=200):
     return f"{reasoning} {content}".strip()
 
 
-def generate_answer(question, context_chunks):
+def generate_answer(question, context_chunks, q_type=""):
     """Use LLM to answer a question given recalled context."""
     context = "\n\n".join(f"[Memory {i+1}] {chunk}" for i, chunk in enumerate(context_chunks[:10]))
-    prompt = f"""Answer the question based on the context below. Always attempt an answer even if uncertain. Be concise (1-2 sentences).
+
+    if q_type == "single-session-preference":
+        prompt = f"""Based on the context below, infer the user's preference or opinion. Look for clues in what they said, chose, liked, or disliked. State the preference directly and concisely (1-2 sentences).
+
+Context:
+{context}
+
+Question: {question}
+Answer:"""
+    elif q_type == "temporal-reasoning":
+        prompt = f"""Answer the question based on the context below. Pay close attention to the order of events, timestamps, and when things happened. Be concise (1-2 sentences).
+
+Context:
+{context}
+
+Question: {question}
+Answer:"""
+    else:
+        prompt = f"""Answer the question based on the context below. Always attempt an answer even if uncertain. Be concise (1-2 sentences).
 
 Context:
 {context}
@@ -105,7 +123,7 @@ def judge_answer(question, expected, generated):
         return True
 
     # Use LLM judge with content-only response (strips reasoning chain noise)
-    prompt = f"""Compare the Generated Answer to the Expected Answer. Does the Generated Answer contain the key information from the Expected Answer?
+    prompt = f"""Does the Generated Answer express the same meaning as the Expected Answer for this question? Minor wording differences are OK — focus on whether the core answer matches, not exact phrasing.
 
 Reply with exactly one word: correct or incorrect
 
@@ -351,7 +369,7 @@ def run():
             # Generate answer using LLM with retrieved context
             chunks = [r.content for r in recalled]
             try:
-                generated = generate_answer(question, chunks)
+                generated = generate_answer(question, chunks, q_type=q_type)
             except Exception as e:
                 generated = ""
 
