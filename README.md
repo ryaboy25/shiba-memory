@@ -23,7 +23,7 @@ Shiba stores memories with hybrid semantic + full-text search, ACT-R-inspired co
 | Python SDK | **Yes** | Yes | Yes | Yes | No |
 | Session management API | **Yes** | Yes | Yes | Yes | No |
 | Webhook subscriptions | **Yes** | No | No | No | No |
-| LongMemEval score | **61.0%** | 49.0% | 63.8% | — | — |
+| LongMemEval score | **60.4%** | 49.0% | 63.8% | — | — |
 
 _HaluMem-Medium: 20 users, 12,300 memory points, 2,648 interference points. Full results in [`benchmarks/`](benchmarks/)._
 
@@ -524,7 +524,7 @@ Embeddings are stored at full 32-bit precision but indexed as 16-bit halfvec. Th
 
 | System | Score | Judge Model | Embedding | Self-hosted |
 |--------|-------|-------------|-----------|-------------|
-| **Shiba** | **61.0%** | Gemma 4 31B Q4 (local) | nomic-embed-text (local) | **Yes** |
+| **Shiba** | **60.4%** | Gemma 4 31B Q4 (local) | nomic-embed-text (local) | **Yes** |
 | Mem0 | 49.0% | GPT-4o (cloud) | OpenAI (cloud) | Partial |
 | Zep | 63.8% | GPT-4o (cloud) | OpenAI (cloud) | No |
 | Honcho | 89.9% | GPT-4o (cloud) | OpenAI (cloud) | Yes |
@@ -534,13 +534,13 @@ Embeddings are stored at full 32-bit precision but indexed as 16-bit halfvec. Th
 | Category | Shiba | Notes |
 |----------|-------|-------|
 | Single-session-user | **91.4%** | Best category — user-stated facts |
-| Single-session-assistant | **91.1%** | Assistant-generated content |
+| Single-session-assistant | **89.3%** | Assistant-generated content |
 | Knowledge-update | **69.2%** | Fact changes over time |
 | Multi-session | **48.1%** | Cross-session reasoning |
-| Temporal-reasoning | **50.4%** | Time-based queries |
+| Temporal-reasoning | **48.9%** | Time-based queries |
 | Single-session-preference | 16.7% | Implicit preferences (improving) |
 
-**Shiba nearly matches Zep (61.0% vs 63.8%) while running entirely locally** with no cloud dependencies. Mem0, Zep, and Honcho all use GPT-4o as judge, which is a significantly stronger evaluator than the local Gemma 4 31B. With a cloud judge, Shiba's score would likely be higher.
+**Shiba nearly matches Zep (60.4% vs 63.8%) while running entirely locally** with no cloud dependencies. Mem0, Zep, and Honcho all use GPT-4o as judge, which is a significantly stronger evaluator than the local Gemma 4 31B. With a cloud judge, Shiba's score would likely be higher.
 
 **Retrieval latency:** 31ms avg — faster than all competitors.
 
