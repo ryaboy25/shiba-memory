@@ -24,6 +24,34 @@ LLAMA_TIMEOUT = 60
 MAX_SAMPLES = 0
 
 
+def extract_answer_from_reasoning(reasoning):
+    """Extract the actual answer from a Gemma reasoning chain."""
+    text = reasoning.strip()
+    if not text:
+        return text
+
+    # Look for quoted conclusion
+    quotes = re.findall(r'"([^"]{3,})"', text)
+    answer_quotes = [q for q in quotes if not q.endswith("?")]
+    if answer_quotes:
+        return answer_quotes[-1]
+
+    # Look for "Answer:" marker
+    answer_match = re.search(r'(?:^|\n)\s*\*?\s*(?:Answer|Result|Conclusion|So|Therefore)[:\s]+(.+)', text, re.IGNORECASE)
+    if answer_match:
+        return answer_match.group(1).strip().rstrip("*").strip()
+
+    # Take the last non-empty meaningful line
+    lines = [l.strip().lstrip("*").strip() for l in text.split("\n") if l.strip()]
+    for line in reversed(lines):
+        if any(line.lower().startswith(p) for p in ["question:", "constraint:", "context:", "input:"]):
+            continue
+        if len(line) > 5:
+            return line
+
+    return text
+
+
 def llm_chat(prompt, max_tokens=200):
     """Call llama.cpp — returns (content, reasoning_content, raw_message)."""
     resp = httpx.post(
@@ -48,8 +76,8 @@ def llm_chat(prompt, max_tokens=200):
             effective = reasoning.split("<channel|>")[-1].strip()
             fallback_used = "channel_split"
         elif reasoning:
-            effective = reasoning
-            fallback_used = "reasoning_as_content"
+            effective = extract_answer_from_reasoning(reasoning)
+            fallback_used = "reasoning_extracted"
 
     return {
         "effective": effective,

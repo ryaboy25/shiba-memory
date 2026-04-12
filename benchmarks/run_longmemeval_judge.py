@@ -26,6 +26,45 @@ LLAMA_ENDPOINT = "http://localhost:8080"
 LLAMA_TIMEOUT = 60
 
 
+def extract_answer_from_reasoning(reasoning):
+    """Extract the actual answer from a Gemma reasoning chain.
+
+    Gemma's reasoning_content often looks like:
+      *  Question: "..."
+      *  Constraint: ...
+      *  ...analysis...
+      *  "Final answer here"
+    or ends with a concluding sentence after the bullet analysis.
+    """
+    text = reasoning.strip()
+    if not text:
+        return text
+
+    # Look for quoted conclusion (Gemma often wraps final answer in quotes)
+    # Find the last quoted string that looks like an answer
+    quotes = re.findall(r'"([^"]{3,})"', text)
+    # Filter out quotes that are just echoing the question
+    answer_quotes = [q for q in quotes if not q.endswith("?")]
+    if answer_quotes:
+        return answer_quotes[-1]
+
+    # Look for "Answer:" or "answer:" marker
+    answer_match = re.search(r'(?:^|\n)\s*\*?\s*(?:Answer|Result|Conclusion|So|Therefore)[:\s]+(.+)', text, re.IGNORECASE)
+    if answer_match:
+        return answer_match.group(1).strip().rstrip("*").strip()
+
+    # Take the last non-empty line (most likely the conclusion)
+    lines = [l.strip().lstrip("*").strip() for l in text.split("\n") if l.strip()]
+    # Skip lines that are just restating the question or constraint
+    for line in reversed(lines):
+        if any(line.lower().startswith(p) for p in ["question:", "constraint:", "context:", "input:"]):
+            continue
+        if len(line) > 5:
+            return line
+
+    return text
+
+
 def llm_chat(prompt, max_tokens=200):
     """Call llama.cpp OpenAI-compatible chat endpoint.
     Returns only the content field (actual answer), ignoring reasoning_content."""
@@ -47,9 +86,9 @@ def llm_chat(prompt, max_tokens=200):
         # Try channel format first
         if "<channel|>" in reasoning:
             content = reasoning.split("<channel|>")[-1].strip()
-        # Otherwise use the full reasoning as the answer
+        # Extract actual answer from reasoning chain (not the full chain)
         elif reasoning.strip():
-            content = reasoning.strip()
+            content = extract_answer_from_reasoning(reasoning)
     return content.strip()
 
 
