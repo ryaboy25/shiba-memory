@@ -71,15 +71,20 @@ def llm_chat(prompt, max_tokens=200):
     content = msg.get("content", "").strip()
     reasoning = msg.get("reasoning_content", "").strip()
 
+    # Strip Gemma channel/turn artifacts
+    if "<channel|>" in content:
+        content = content.split("<channel|>")[-1].strip()
+    content = content.replace("<end_of_turn>", "").replace("<|channel>thought\n", "").strip()
+
     # Same fallback logic as main script
     effective = content
     fallback_used = None
     if not content:
         if "<channel|>" in reasoning:
-            effective = reasoning.split("<channel|>")[-1].strip()
+            effective = reasoning.split("<channel|>")[-1].strip().replace("<end_of_turn>", "").strip()
             fallback_used = "channel_split"
         elif reasoning:
-            effective = reasoning
+            effective = reasoning.replace("<end_of_turn>", "").strip()
             fallback_used = "reasoning_as_content"
 
     return {

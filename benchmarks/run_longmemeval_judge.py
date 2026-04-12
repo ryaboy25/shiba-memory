@@ -84,14 +84,17 @@ def llm_chat(prompt, max_tokens=200):
     msg = resp.json()["choices"][0]["message"]
     content = msg.get("content", "")
     reasoning = msg.get("reasoning_content", "")
+    # Strip Gemma channel/turn artifacts
+    if "<channel|>" in content:
+        content = content.split("<channel|>")[-1].strip()
+    content = content.replace("<end_of_turn>", "").replace("<|channel>thought\n", "").strip()
     # Fallback chain when content is empty:
     if not content.strip():
-        # Try channel format first
         if "<channel|>" in reasoning:
             content = reasoning.split("<channel|>")[-1].strip()
-        # Use full reasoning as fallback
         elif reasoning.strip():
             content = reasoning.strip()
+        content = content.replace("<end_of_turn>", "").strip()
     return content.strip()
 
 
