@@ -162,6 +162,31 @@ export async function embed(text: string): Promise<number[]> {
   throw new Error(`Embedding failed after ${EMBED_RETRIES + 1} attempts: ${lastError?.message}`);
 }
 
+/** Batch embed multiple texts at once (TEI provider only, falls back to sequential). */
+export async function embedBatch(texts: string[]): Promise<number[][]> {
+  if (texts.length === 0) return [];
+
+  // TEI supports native batching
+  if (PROVIDER === "tei") {
+    const url = process.env.SHB_TEI_URL || "http://localhost:8090";
+    try {
+      const res = await fetch(`${url}/embed`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ inputs: texts, truncate: true }),
+        signal: AbortSignal.timeout(EMBED_TIMEOUT * 2),
+      });
+      if (res.ok) {
+        const data = (await res.json()) as number[][];
+        return data.map((v) => normalizeVec(v));
+      }
+    } catch { /* fall through to sequential */ }
+  }
+
+  // Sequential fallback for other providers
+  return Promise.all(texts.map((t) => embed(t)));
+}
+
 export function pgVector(vec: number[]): string {
   return `[${vec.join(",")}]`;
 }

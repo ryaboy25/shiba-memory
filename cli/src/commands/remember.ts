@@ -36,11 +36,46 @@ function contentHash(type: string, content: string): string {
   return createHash("sha256").update(`${type}:${content}`).digest("hex").slice(0, 32);
 }
 
+// Max chars for a single embedding — beyond this, chunk and store multiple
+const MAX_EMBED_CONTENT = 1500;
+
 export async function remember(opts: RememberOptions): Promise<string> {
   if (!VALID_TYPES.includes(opts.type)) {
     throw new Error(`Invalid type: ${opts.type}. Must be one of: ${VALID_TYPES.join(", ")}`);
   }
 
+  // ── Chunking: split long content into linked chunk memories ──
+  const fullText = `${opts.title} ${opts.content}`;
+  if (fullText.length > MAX_EMBED_CONTENT && opts.type !== "episode") {
+    const { chunkText } = await import("../utils/chunker.js");
+    const chunks = chunkText(opts.content, MAX_EMBED_CONTENT, 200);
+    if (chunks.length > 1) {
+      // Store first chunk as the primary memory
+      const primaryId = await rememberSingle({ ...opts, content: chunks[0] });
+      // Store remaining chunks as linked memories
+      for (let i = 1; i < chunks.length; i++) {
+        const chunkId = await rememberSingle({
+          ...opts,
+          title: `${opts.title} [${i + 1}/${chunks.length}]`,
+          content: chunks[i],
+          tags: [...(opts.tags || []), "chunk", `chunk-${i + 1}-of-${chunks.length}`],
+        });
+        // Link chunk to primary
+        await query(
+          `INSERT INTO memory_links (source_id, target_id, relation, strength)
+           VALUES ($1, $2, 'related'::relation_type, 0.9)
+           ON CONFLICT DO NOTHING`,
+          [primaryId, chunkId]
+        ).catch(() => {});
+      }
+      return primaryId;
+    }
+  }
+
+  return rememberSingle(opts);
+}
+
+async function rememberSingle(opts: RememberOptions): Promise<string> {
   // ── Feedback loop prevention ─────────────────────────────
   // Check if we recently stored this exact content (prevents extraction loops)
   const hash = contentHash(opts.type, opts.content);

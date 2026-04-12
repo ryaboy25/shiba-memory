@@ -113,6 +113,26 @@ def embed(text: str) -> list[float]:
     return _embed_ollama(text)
 
 
+def embed_batch(texts: list[str]) -> list[list[float]]:
+    """Batch embed multiple texts at once (TEI only, falls back to sequential)."""
+    if not texts:
+        return []
+    cleaned = [t if t and t.strip() else "empty" for t in texts]
+    if EMBEDDING_PROVIDER == "tei":
+        try:
+            resp = httpx.post(
+                f"{TEI_URL}/embed",
+                json={"inputs": cleaned, "truncate": True},
+                timeout=60,
+            )
+            resp.raise_for_status()
+            vecs = resp.json()
+            return [_normalize(v[:DIMENSIONS] if len(v) >= DIMENSIONS else v + [0.0] * (DIMENSIONS - len(v))) for v in vecs]
+        except Exception:
+            pass  # fall through to sequential
+    return [embed(t) for t in texts]
+
+
 def pg_vector(vec: list[float]) -> str:
     return "[" + ",".join(str(v) for v in vec) + "]"
 

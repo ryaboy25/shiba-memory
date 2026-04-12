@@ -163,6 +163,37 @@ export async function recall(opts: RecallOptions & { skipTouch?: boolean } = { q
     rows = reordered;
   }
 
+  // Multi-hop graph traversal: find related memories via knowledge graph links
+  if (rows.length > 0 && rows.length < limit) {
+    try {
+      const topIds = rows.slice(0, 3).map((r: Memory) => r.id);
+      const graphResults = await query<Memory>(
+        `SELECT DISTINCT m.id, m.type, m.title, m.content, m.metadata, m.tags,
+                m.profile, m.project_path, ml.strength AS relevance, m.created_at
+         FROM memory_links ml
+         JOIN memories m ON m.id = CASE
+           WHEN ml.source_id = ANY($1::uuid[]) THEN ml.target_id
+           ELSE ml.source_id
+         END
+         WHERE (ml.source_id = ANY($1::uuid[]) OR ml.target_id = ANY($1::uuid[]))
+           AND m.id != ALL($1::uuid[])
+           AND ml.strength >= 0.5
+           AND ml.relation != 'contradicts'
+         ORDER BY ml.strength DESC
+         LIMIT $2`,
+        [topIds, limit - rows.length]
+      );
+      // Append graph-discovered memories (avoid duplicates)
+      const existingIds = new Set(rows.map((r: Memory) => r.id));
+      for (const gRow of graphResults.rows) {
+        if (!existingIds.has(gRow.id)) {
+          rows.push(gRow);
+          existingIds.add(gRow.id);
+        }
+      }
+    } catch { /* graph traversal is best-effort */ }
+  }
+
   // Context expansion: enrich top results with surrounding session turns
   if (opts.expandContext && rows.length > 0) {
     try {

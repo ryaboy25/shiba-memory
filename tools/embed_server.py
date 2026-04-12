@@ -21,5 +21,21 @@ class EmbedRequest(BaseModel):
 @app.post("/embed")
 def embed(req: EmbedRequest):
     texts = [req.inputs] if isinstance(req.inputs, str) else req.inputs
-    vecs = model.encode(texts, normalize_embeddings=True).tolist()
+    vecs = model.encode(texts, normalize_embeddings=True, batch_size=32).tolist()
     return vecs
+
+@app.post("/embed_batch")
+def embed_batch(req: EmbedRequest):
+    """Explicit batch endpoint — same as /embed but clearer intent."""
+    texts = [req.inputs] if isinstance(req.inputs, str) else req.inputs
+    vecs = model.encode(texts, normalize_embeddings=True, batch_size=32).tolist()
+    return vecs
+
+@app.get("/info")
+def info():
+    return {
+        "model": MODEL_ID,
+        "dimensions": model.get_sentence_embedding_dimension(),
+        "max_batch_size": 32,
+        "device": str(DEVICE),
+    }
