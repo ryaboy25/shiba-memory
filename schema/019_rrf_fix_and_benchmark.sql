@@ -13,6 +13,9 @@
 -- and improve entity graph matching to use all query words.
 -- ==========================================================
 
+-- Ensure pg_trgm is available for similarity() in entity graph channel
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+
 DROP FUNCTION IF EXISTS scoped_recall;
 
 CREATE OR REPLACE FUNCTION scoped_recall(
