@@ -144,18 +144,97 @@ Answer:"""
     return llm_chat(prompt, max_tokens=300)
 
 
-def judge_answer(question, expected, generated):
-    """Use LLM to judge if the generated answer matches the expected answer.
+NUM_WORDS = {
+    "zero": "0", "one": "1", "two": "2", "three": "3", "four": "4",
+    "five": "5", "six": "6", "seven": "7", "eight": "8", "nine": "9",
+    "ten": "10", "eleven": "11", "twelve": "12", "thirteen": "13",
+    "fourteen": "14", "fifteen": "15", "sixteen": "16", "seventeen": "17",
+    "eighteen": "18", "nineteen": "19", "twenty": "20",
+}
+NUM_DIGITS = {v: k for k, v in NUM_WORDS.items()}
+STOP_WORDS = {"the", "a", "an", "is", "are", "was", "were", "i", "my", "me",
+              "we", "you", "your", "and", "or", "of", "in", "on", "at", "to",
+              "for", "it", "its", "that", "this", "have", "has", "had", "do",
+              "did", "does", "be", "been", "being", "with", "from", "by", "as",
+              "but", "not", "so", "if", "no", "yes", "also", "very", "just",
+              "about", "up", "out", "into", "over", "after", "before", "than"}
 
-    Strategy: Use llm_chat (content only, not reasoning) with a very constrained
-    prompt to get a clean verdict. Gemma's reasoning chain pollutes raw output
-    with ambiguous phrases that break pattern matching.
+
+def normalize_number(text):
+    """Extract a canonical number from text. Returns string digit or None."""
+    text = text.strip().lower()
+    # Direct digit
+    if text.isdigit():
+        return text
+    # Number word
+    if text in NUM_WORDS:
+        return NUM_WORDS[text]
+    # Find first number in text
+    for word in text.split():
+        word = word.strip(".,;:!?\"'")
+        if word.isdigit():
+            return word
+        if word in NUM_WORDS:
+            return NUM_WORDS[word]
+    return None
+
+
+def extract_key_tokens(text):
+    """Extract meaningful tokens from text, removing stop words and punctuation."""
+    text = text.lower().strip().strip("\"'").strip()
+    tokens = re.findall(r'[a-z0-9]+(?:\'[a-z]+)?', text)
+    return {t for t in tokens if t not in STOP_WORDS and len(t) > 1}
+
+
+def fuzzy_judge(expected, generated):
+    """Fast token-overlap judge for factual answers. Returns (matched, reason) or (None, None) to defer to LLM."""
+    expected_clean = expected.strip().strip("\"'").strip()
+    gen_clean = generated.strip()
+
+    # --- Numeric check: if expected is or starts with a number ---
+    exp_num = normalize_number(expected_clean)
+    if exp_num is not None:
+        gen_num = normalize_number(gen_clean)
+        if gen_num is not None:
+            match = exp_num == gen_num
+            return match, f"numeric:{'match' if match else 'mismatch'}({exp_num}vs{gen_num})"
+        # Check if the number appears anywhere in generated
+        num_word = NUM_DIGITS.get(exp_num, "")
+        if exp_num in gen_clean or num_word in gen_clean.lower():
+            return True, f"numeric:found_in_text({exp_num})"
+        return None, None  # Can't find a number, defer to LLM
+
+    # --- Short factual answer: token overlap ---
+    if len(expected_clean) < 100:
+        exp_tokens = extract_key_tokens(expected_clean)
+        gen_tokens = extract_key_tokens(gen_clean)
+        if not exp_tokens:
+            return None, None
+        overlap = exp_tokens & gen_tokens
+        ratio = len(overlap) / len(exp_tokens)
+        if ratio >= 0.6:
+            return True, f"token_overlap:{ratio:.0%}({len(overlap)}/{len(exp_tokens)})"
+        if ratio <= 0.15:
+            return False, f"token_overlap_low:{ratio:.0%}({len(overlap)}/{len(exp_tokens)})"
+
+    # --- Defer to LLM for complex/long/ambiguous answers ---
+    return None, None
+
+
+def judge_answer(question, expected, generated):
+    """Hybrid judge: fast fuzzy matching for factual answers, LLM for complex ones.
+
+    Order: refusal check → exact substring → fuzzy/numeric → LLM judge
     """
     # If generated answer is empty or refusal, it's incorrect
     if not generated or len(generated.strip()) < 3:
         return False
     gen_lower = generated.lower()
     if any(p in gen_lower for p in ["i don't have", "not enough information", "no information", "cannot determine"]):
+        # Exception: if expected answer also says "not enough information", it's correct
+        exp_lower = expected.lower()
+        if any(p in exp_lower for p in ["not enough", "information provided is not enough"]):
+            return True
         return False
 
     # Quick string-match check: if the expected answer literally appears in the generated answer, it's correct
@@ -164,7 +243,12 @@ def judge_answer(question, expected, generated):
     if expected_clean and expected_clean in gen_clean:
         return True
 
-    # Use LLM judge with content-only response (strips reasoning chain noise)
+    # Fuzzy judge for factual answers (numbers, short answers, entity lists)
+    fuzzy_result, _reason = fuzzy_judge(expected, generated)
+    if fuzzy_result is not None:
+        return fuzzy_result
+
+    # LLM judge for complex/subjective answers only
     prompt = f"""Does the Generated Answer express the same meaning as the Expected Answer for this question? Minor wording differences are OK — focus on whether the core answer matches, not exact phrasing.
 
 Reply with exactly one word: correct or incorrect
@@ -174,7 +258,7 @@ Expected: {expected}
 Generated: {generated}
 
 Verdict:"""
-    result = llm_chat(prompt, max_tokens=200)  # Content only, strips reasoning chain
+    result = llm_chat(prompt, max_tokens=200)
     result_lower = result.lower().strip()
 
     # Parse the clean content response

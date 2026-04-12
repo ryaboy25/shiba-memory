@@ -120,6 +120,73 @@ Answer:"""
     return llm_chat(prompt, max_tokens=300)
 
 
+NUM_WORDS = {
+    "zero": "0", "one": "1", "two": "2", "three": "3", "four": "4",
+    "five": "5", "six": "6", "seven": "7", "eight": "8", "nine": "9",
+    "ten": "10", "eleven": "11", "twelve": "12", "thirteen": "13",
+    "fourteen": "14", "fifteen": "15", "sixteen": "16", "seventeen": "17",
+    "eighteen": "18", "nineteen": "19", "twenty": "20",
+}
+NUM_DIGITS = {v: k for k, v in NUM_WORDS.items()}
+STOP_WORDS = {"the", "a", "an", "is", "are", "was", "were", "i", "my", "me",
+              "we", "you", "your", "and", "or", "of", "in", "on", "at", "to",
+              "for", "it", "its", "that", "this", "have", "has", "had", "do",
+              "did", "does", "be", "been", "being", "with", "from", "by", "as",
+              "but", "not", "so", "if", "no", "yes", "also", "very", "just",
+              "about", "up", "out", "into", "over", "after", "before", "than"}
+
+
+def normalize_number(text):
+    text = text.strip().lower()
+    if text.isdigit():
+        return text
+    if text in NUM_WORDS:
+        return NUM_WORDS[text]
+    for word in text.split():
+        word = word.strip(".,;:!?\"'")
+        if word.isdigit():
+            return word
+        if word in NUM_WORDS:
+            return NUM_WORDS[word]
+    return None
+
+
+def extract_key_tokens(text):
+    text = text.lower().strip().strip("\"'").strip()
+    tokens = re.findall(r'[a-z0-9]+(?:\'[a-z]+)?', text)
+    return {t for t in tokens if t not in STOP_WORDS and len(t) > 1}
+
+
+def fuzzy_judge(expected, generated):
+    expected_clean = expected.strip().strip("\"'").strip()
+    gen_clean = generated.strip()
+
+    exp_num = normalize_number(expected_clean)
+    if exp_num is not None:
+        gen_num = normalize_number(gen_clean)
+        if gen_num is not None:
+            match = exp_num == gen_num
+            return match, f"numeric:{'match' if match else 'mismatch'}({exp_num}vs{gen_num})"
+        num_word = NUM_DIGITS.get(exp_num, "")
+        if exp_num in gen_clean or num_word in gen_clean.lower():
+            return True, f"numeric:found_in_text({exp_num})"
+        return None, None
+
+    if len(expected_clean) < 100:
+        exp_tokens = extract_key_tokens(expected_clean)
+        gen_tokens = extract_key_tokens(gen_clean)
+        if not exp_tokens:
+            return None, None
+        overlap = exp_tokens & gen_tokens
+        ratio = len(overlap) / len(exp_tokens)
+        if ratio >= 0.6:
+            return True, f"token_overlap:{ratio:.0%}({len(overlap)}/{len(exp_tokens)})"
+        if ratio <= 0.15:
+            return False, f"token_overlap_low:{ratio:.0%}({len(overlap)}/{len(exp_tokens)})"
+
+    return None, None
+
+
 def judge_answer(question, expected, generated):
     """Returns (verdict, debug_info)."""
     if not generated or len(generated.strip()) < 3:
@@ -127,6 +194,9 @@ def judge_answer(question, expected, generated):
 
     gen_lower = generated.lower()
     if any(p in gen_lower for p in ["i don't have", "not enough information", "no information", "cannot determine"]):
+        exp_lower = expected.lower()
+        if any(p in exp_lower for p in ["not enough", "information provided is not enough"]):
+            return True, {"reason": "both_insufficient_info"}
         return False, {"reason": "refusal_detected", "generated": generated}
 
     expected_clean = expected.strip().strip("\"'").strip().lower()
@@ -134,6 +204,12 @@ def judge_answer(question, expected, generated):
     if expected_clean and expected_clean in gen_clean:
         return True, {"reason": "string_match", "expected_clean": expected_clean}
 
+    # Fuzzy judge for factual answers
+    fuzzy_result, fuzzy_reason = fuzzy_judge(expected, generated)
+    if fuzzy_result is not None:
+        return fuzzy_result, {"reason": f"fuzzy:{fuzzy_reason}"}
+
+    # LLM judge for complex answers only
     prompt = f"""Does the Generated Answer express the same meaning as the Expected Answer for this question? Minor wording differences are OK — focus on whether the core answer matches, not exact phrasing.
 
 Reply with exactly one word: correct or incorrect
