@@ -17,6 +17,7 @@ export interface RememberOptions {
   expiresIn?: string; // e.g. "30d", "7d", "24h"
   profile?: string;
   projectPath?: string;
+  confidence?: number; // Override confidence (0.025-0.975, default: schema default 0.5)
   temporalRef?: string; // ISO date — what time period this memory refers to
   userId?: string;     // User isolation (default: "default")
   agentId?: string;    // Agent isolation (default: "default")
@@ -127,25 +128,30 @@ async function rememberSingle(opts: RememberOptions): Promise<string> {
 
     const expiresAt = opts.expiresIn ? parseExpiry(opts.expiresIn) : null;
 
+    const hasConfidence = opts.confidence !== undefined;
     const result = await txQuery<{ id: string }>(
-      `INSERT INTO memories (type, title, content, embedding, tags, importance, source, expires_at, profile, project_path, temporal_ref, user_id, agent_id)
-       VALUES ($1, $2, $3, $4::vector, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-       RETURNING id`,
-      [
-        opts.type,
-        opts.title,
-        opts.content,
-        pgVector(vec),
-        opts.tags || [],
-        opts.importance ?? 0.5,
-        opts.source || "manual",
-        expiresAt,
-        opts.profile || "global",
-        opts.projectPath || null,
-        opts.temporalRef || null,
-        opts.userId || "default",
-        opts.agentId || "default",
-      ]
+      hasConfidence
+        ? `INSERT INTO memories (type, title, content, embedding, tags, importance, confidence, source, expires_at, profile, project_path, temporal_ref, user_id, agent_id)
+           VALUES ($1, $2, $3, $4::vector, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+           RETURNING id`
+        : `INSERT INTO memories (type, title, content, embedding, tags, importance, source, expires_at, profile, project_path, temporal_ref, user_id, agent_id)
+           VALUES ($1, $2, $3, $4::vector, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+           RETURNING id`,
+      hasConfidence
+        ? [
+            opts.type, opts.title, opts.content, pgVector(vec),
+            opts.tags || [], opts.importance ?? 0.5, opts.confidence,
+            opts.source || "manual", expiresAt,
+            opts.profile || "global", opts.projectPath || null,
+            opts.temporalRef || null, opts.userId || "default", opts.agentId || "default",
+          ]
+        : [
+            opts.type, opts.title, opts.content, pgVector(vec),
+            opts.tags || [], opts.importance ?? 0.5,
+            opts.source || "manual", expiresAt,
+            opts.profile || "global", opts.projectPath || null,
+            opts.temporalRef || null, opts.userId || "default", opts.agentId || "default",
+          ]
     );
 
     const memoryId = result.rows[0].id;

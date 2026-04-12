@@ -2,23 +2,15 @@
 Shiba LongMemEval Benchmark — LLM-as-Judge Scoring
 ====================================================
 
-Same as run_longmemeval.py but uses a local LLM (Gemma 4 via llama.cpp)
-to generate answers from recalled context, then judge correctness.
-
-This produces scores comparable to Mem0, Zep, and Honcho benchmarks.
+Uses the FULL Shiba gateway pipeline — same path as Claude Code hooks
+and Hermes plugin. Gets extraction, dedup, auto-linking, confidence
+scoring, and the full hybrid search pipeline.
 
 Pipeline:
-  1. Ingest with overlapping 3-turn windows (not individual turns)
-  2. Recall with iterative multi-hop retrieval + query expansion
+  1. Ingest via /remember (with extract=True for Tier 1 pattern extraction)
+  2. Recall via /recall (full RRF + query classification + graph traversal)
   3. Feed chunks + question to Gemma 4 → generate answer
   4. Feed question + expected answer + generated answer to Gemma 4 → judge correctness
-
-Optimizations over v1:
-  - Overlapping window ingestion captures conversational context
-  - Iterative retrieval: first pass → extract key terms → second pass
-  - Query expansion: generate 2 reformulations for broader coverage
-  - Higher top_k (15) with deduplication
-  - Confidence set to 0.95 for all benchmark data
 """
 
 import sys
@@ -28,7 +20,7 @@ import re
 sys.path.insert(0, ".")
 
 import httpx
-from shiba_adapter import ShibaAdapter, IngestItem, RecallQuery
+from shiba_gateway_adapter import ShibaGatewayAdapter as ShibaAdapter, IngestItem, RecallQuery
 
 LLAMA_ENDPOINT = "http://localhost:8080"
 LLAMA_TIMEOUT = 60

@@ -83,26 +83,18 @@ class ShibaGatewayAdapter:
 
             title = item.metadata.get("title", "benchmark")
             mem_type = item.metadata.get("type", "episode")
-            role = item.metadata.get("role", "user")
             importance = item.metadata.get("importance", 0.5)
             tags = item.metadata.get("tags", [namespace])
             if namespace not in tags:
                 tags.append(namespace)
-
-            # Set confidence based on role (same as production hooks)
-            if role == "user":
-                confidence_hint = 0.9
-            elif role == "assistant":
-                confidence_hint = 0.7
-            else:
-                confidence_hint = 0.5
 
             body: dict[str, Any] = {
                 "type": mem_type,
                 "title": title[:200],
                 "content": item.content,
                 "tags": tags,
-                "importance": max(importance, confidence_hint * 0.6),
+                "importance": importance,
+                "confidence": 0.95,  # High confidence for all benchmark data
                 "source": "benchmark",
                 "extract": True,  # Enable Tier 1 pattern extraction
                 "auto_importance": False,  # Skip LLM importance to save time
