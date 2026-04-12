@@ -143,8 +143,6 @@ class ShibaGatewayAdapter:
     def cleanup(self, *, namespace: str = "default") -> None:
         """Delete all memories with the given namespace tag."""
         try:
-            self._post("/forget", {"type": None})
-            # Use direct DB for cleanup since gateway doesn't support tag-based delete
             import psycopg2
             DB_CONFIG = {
                 "host": os.getenv("SHB_DB_HOST", "localhost"),
