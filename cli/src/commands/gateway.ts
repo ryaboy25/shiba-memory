@@ -851,6 +851,7 @@ function createApp() {
     user_message: z.string().min(1).max(5000),
     assistant_message: z.string().max(5000).optional(),
     user_id: z.string().max(100).default("default"),
+    created_at: z.string().datetime({ offset: true }).optional(),
   });
 
   app.post("/extract/facts", async (c) => {
@@ -869,6 +870,7 @@ function createApp() {
         importance: fact.confidence,
         source: "extraction",
         userId: body.user_id,
+        createdAt: body.created_at,
       });
       memoryIds.push(id);
     }

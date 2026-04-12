@@ -104,15 +104,18 @@ def import_conversations(
 
             if not dry_run:
                 try:
-                    resp = client.post(f"{gateway_url}/remember", headers=headers, json={
+                    remember_body = {
                         "type": "episode",
                         "title": title,
                         "content": content,
                         "tags": ["claude-import", f"session-{session_id[:20]}"],
                         "user_id": user_id,
                         "source": "import",
-                        "expires_in": "90d",  # Claude conversations expire after 90 days
-                    })
+                    }
+                    # Preserve original conversation timestamp
+                    if created:
+                        remember_body["created_at"] = created
+                    resp = client.post(f"{gateway_url}/remember", headers=headers, json=remember_body)
                     if resp.status_code == 200:
                         stats["episodes"] += 1
                 except Exception as e:
@@ -142,7 +145,7 @@ def import_conversations(
 
             if not dry_run:
                 try:
-                    client.post(f"{gateway_url}/remember", headers=headers, json={
+                    summary_body = {
                         "type": "episode",
                         "title": f"Session: {name[:80]}",
                         "content": summary_content[:500],
@@ -150,7 +153,10 @@ def import_conversations(
                         "user_id": user_id,
                         "source": "import",
                         "importance": 0.4,
-                    })
+                    }
+                    if created:
+                        summary_body["created_at"] = created
+                    client.post(f"{gateway_url}/remember", headers=headers, json=summary_body)
                 except Exception:
                     pass
 

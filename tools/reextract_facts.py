@@ -31,7 +31,7 @@ def run(gateway_url: str, user_id: str, limit: int = 0, batch_size: int = 50):
     )
     cur = conn.cursor()
 
-    sql = "SELECT id, content FROM memories WHERE type='episode' AND source='import' ORDER BY created_at DESC"
+    sql = "SELECT id, content, created_at FROM memories WHERE type='episode' AND source='import' ORDER BY created_at DESC"
     if limit > 0:
         sql += f" LIMIT {limit}"
     cur.execute(sql)
@@ -43,7 +43,7 @@ def run(gateway_url: str, user_id: str, limit: int = 0, batch_size: int = 50):
     total_facts = 0
     errors = 0
 
-    for i, (mem_id, content) in enumerate(episodes):
+    for i, (mem_id, content, episode_created_at) in enumerate(episodes):
         # Split content into user/assistant parts
         parts = content.split("\nAssistant:", 1)
         user_msg = parts[0].replace("User: ", "", 1).strip() if parts else content
@@ -53,11 +53,15 @@ def run(gateway_url: str, user_id: str, limit: int = 0, batch_size: int = 50):
             continue
 
         try:
-            resp = client.post(f"{gateway_url}/extract/facts", headers=headers, json={
+            body = {
                 "user_message": user_msg[:2000],
                 "assistant_message": asst_msg[:2000],
                 "user_id": user_id,
-            })
+            }
+            # Preserve original episode timestamp on extracted facts
+            if episode_created_at:
+                body["created_at"] = episode_created_at.isoformat()
+            resp = client.post(f"{gateway_url}/extract/facts", headers=headers, json=body)
             if resp.status_code == 200:
                 data = resp.json()
                 count = data.get("count", 0)
