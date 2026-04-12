@@ -41,8 +41,8 @@ const RememberSchema = z.object({
   project_path: z.string().max(500).optional(),
   user_id: z.string().max(100).default("default"),
   agent_id: z.string().max(100).default("default"),
-  created_at: z.string().datetime().optional(),   // Override created_at for temporal ordering
-  temporal_ref: z.string().datetime().optional(),  // What time period this memory refers to
+  created_at: z.string().datetime({ offset: true }).optional(),   // Override created_at for temporal ordering
+  temporal_ref: z.string().datetime({ offset: true }).optional(),  // What time period this memory refers to
   extract: z.boolean().default(false), // Auto-extract facts from content before storing
   auto_importance: z.boolean().default(false), // Auto-estimate importance via LLM/heuristic
 });
@@ -59,8 +59,8 @@ const RecallSchema = z.object({
   user_id: z.string().max(100).optional(),
   agent_id: z.string().max(100).optional(),
   // Temporal search
-  after: z.string().datetime().optional(),   // ISO 8601 — only memories after this date
-  before: z.string().datetime().optional(),  // ISO 8601 — only memories before this date
+  after: z.string().datetime({ offset: true }).optional(),   // ISO 8601 — only memories after this date
+  before: z.string().datetime({ offset: true }).optional(),  // ISO 8601 — only memories before this date
   // Cross-encoder reranking
   rerank: z.boolean().default(false),
   // Context expansion: enrich results with surrounding session turns
