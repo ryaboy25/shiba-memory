@@ -80,16 +80,17 @@ def llm_chat_raw(prompt, max_tokens=200):
 
 
 def generate_answer(question, context_chunks):
-    """Use LLM to answer a question given recalled context."""
-    context = "\n\n".join(f"[Memory {i+1}] {chunk}" for i, chunk in enumerate(context_chunks[:15]))
-    prompt = f"""Answer the question based ONLY on the context below. If the context contains the answer, state it clearly and concisely (1-2 sentences). If the context does not contain enough information, say "I don't have enough information" but still attempt a best guess.
+    """Use LLM to answer a question given recalled context.
+    Limit to top 5 most relevant chunks — more context confuses the LLM."""
+    context = "\n\n".join(f"[{i+1}] {chunk}" for i, chunk in enumerate(context_chunks[:5]))
+    prompt = f"""Based on the memories below, answer the question concisely (1-2 sentences max).
 
-Context:
+Memories:
 {context}
 
 Question: {question}
 Answer:"""
-    return llm_chat(prompt, max_tokens=300)
+    return llm_chat(prompt, max_tokens=150)
 
 
 def judge_answer(question, expected, generated):
@@ -194,16 +195,14 @@ def expand_query(question):
     return expansions[:3]  # Max 3 variants
 
 
-def iterative_recall(adapter, question, namespace, top_k=15):
-    """Multi-pass retrieval: first pass → extract key terms → second pass → merge.
-    This is what separates 50% systems from 90% systems."""
+def multi_query_recall(adapter, question, namespace, top_k=10):
+    """Query expansion recall: run original + reformulations, merge top results."""
 
     seen_ids = set()
     all_results = []
 
-    # Pass 1: Direct query with expansions
-    expansions = expand_query(question)
-    for q in expansions:
+    # Run original query + expansions
+    for q in expand_query(question):
         try:
             recalled = adapter.recall(
                 RecallQuery(query=q, top_k=top_k),
@@ -215,39 +214,6 @@ def iterative_recall(adapter, question, namespace, top_k=15):
                     all_results.append(r)
         except Exception:
             pass
-
-    # Pass 2: Extract key entities/terms from first pass results and re-query
-    if all_results:
-        # Collect unique terms from top results
-        top_content = " ".join(r.content[:200] for r in all_results[:5])
-
-        # Extract potential entity names (capitalized words, quoted strings, names)
-        entities = set()
-        # Capitalized multi-word names (e.g., "New York", "John Smith")
-        for match in re.finditer(r'[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+', top_content):
-            entities.add(match.group())
-        # Single capitalized words that aren't sentence starters
-        for match in re.finditer(r'(?<=[.!?]\s)[A-Z][a-z]+|(?<=\[)\w+(?=\])', top_content):
-            name = match.group()
-            if len(name) > 2 and name.lower() not in {'the', 'this', 'that', 'what', 'when', 'where', 'user', 'assistant', 'session', 'summary'}:
-                entities.add(name)
-        # Quoted strings
-        for match in re.finditer(r'"([^"]{2,30})"', top_content):
-            entities.add(match.group(1))
-
-        # Re-query with extracted entities
-        for entity in list(entities)[:3]:
-            try:
-                recalled = adapter.recall(
-                    RecallQuery(query=entity, top_k=5),
-                    namespace=namespace,
-                )
-                for r in recalled:
-                    if r.document_id not in seen_ids:
-                        seen_ids.add(r.document_id)
-                        all_results.append(r)
-            except Exception:
-                pass
 
     # Sort by score, return top_k
     all_results.sort(key=lambda r: r.score, reverse=True)
@@ -391,7 +357,7 @@ def run():
 
             # Iterative multi-hop retrieval with query expansion
             start = time.time()
-            recalled = iterative_recall(adapter, question, namespace, top_k=15)
+            recalled = multi_query_recall(adapter, question, namespace, top_k=10)
             recall_time = time.time() - start
             results["latencies"].append(recall_time)
 
