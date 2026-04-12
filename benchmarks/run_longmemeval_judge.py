@@ -72,15 +72,7 @@ Context:
 Question: {question}
 Answer:"""
     elif q_type == "temporal-reasoning":
-        prompt = f"""Answer the question based on the context below. Pay close attention to the order of events, timestamps, and when things happened. If the context does not contain enough information to answer, say "The information provided is not enough" and explain what is missing. Be concise (1-2 sentences).
-
-Context:
-{context}
-
-Question: {question}
-Answer:"""
-    elif q_type == "multi-session":
-        prompt = f"""Answer the question based on the context below. When counting items, list each one explicitly before giving a total. Be thorough — check every memory for relevant items. Be concise.
+        prompt = f"""Answer the question based on the context below. Pay close attention to the order of events, timestamps, and when things happened. Be concise (1-2 sentences).
 
 Context:
 {context}
@@ -114,10 +106,7 @@ STOP_WORDS = {"the", "a", "an", "is", "are", "was", "were", "i", "my", "me",
               "about", "up", "out", "into", "over", "after", "before", "than"}
 
 INSUFFICIENT_PHRASES = [
-    "not enough", "information provided is not enough", "not mentioned",
-    "no mention", "does not mention", "does not contain", "not enough information",
-    "cannot determine", "no information", "did not mention", "not stated",
-    "insufficient information", "doesn't mention",
+    "i don't have", "not enough information", "no information", "cannot determine",
 ]
 
 
@@ -192,15 +181,11 @@ def judge_answer(question, expected, generated):
         return False
 
     gen_lower = generated.lower()
-    exp_lower = expected.lower()
 
     # Check if generated says insufficient info / refusal
-    gen_insufficient = any(p in gen_lower for p in INSUFFICIENT_PHRASES)
-    exp_insufficient = any(p in exp_lower for p in INSUFFICIENT_PHRASES)
-
-    if gen_insufficient:
-        # Both say insufficient → correct
-        if exp_insufficient:
+    if any(p in gen_lower for p in INSUFFICIENT_PHRASES):
+        exp_lower = expected.lower()
+        if any(p in exp_lower for p in ["not enough", "information provided is not enough"]):
             return True
         return False
 
@@ -434,12 +419,9 @@ def run():
             if not question or not answer:
                 continue
 
-            # Use higher top_k for multi-session counting questions
-            top_k = 20 if q_type == "multi-session" else 10
-
             # Iterative multi-hop retrieval with query expansion
             start = time.time()
-            recalled = multi_query_recall(adapter, question, namespace, top_k=top_k)
+            recalled = multi_query_recall(adapter, question, namespace, top_k=10)
             recall_time = time.time() - start
             results["latencies"].append(recall_time)
 
