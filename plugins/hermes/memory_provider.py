@@ -49,7 +49,7 @@ RECALL_SCHEMA = {
                 "enum": ["user", "feedback", "project", "reference", "episode", "skill"],
                 "description": "Filter by memory type (optional)",
             },
-            "limit": {"type": "integer", "description": "Max results (default 5)", "default": 5},
+            "limit": {"type": "integer", "description": "Max results (default 10)", "default": 10},
         },
         "required": ["query"],
     },
@@ -304,7 +304,7 @@ class ShibaMemoryProvider(MemoryProvider):
         return resp.json()
 
     def _recall(self, args):
-        body: Dict[str, Any] = {"query": args["query"], "limit": args.get("limit", 5)}
+        body: Dict[str, Any] = {"query": args["query"], "limit": args.get("limit", 10)}
         if args.get("type"):
             body["type"] = args["type"]
         if self.project:
