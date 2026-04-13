@@ -149,14 +149,18 @@ export async function recall(opts: RecallOptions & { skipTouch?: boolean } = { q
   // Original theory: LLMs attend most to START and END of context.
   // In practice: results are consumed by structured prompts, not raw context.
 
-  // Multi-hop graph traversal: find related memories via knowledge graph links
-  // Only when explicitly requested — auto-linked benchmark data has too much noise
-  if (opts.expandContext && rows.length > 0 && rows.length < limit) {
+  // Graph expansion: follow knowledge graph links from top results to find
+  // related memories that didn't rank high enough on their own.
+  // e.g., "User has a cat" → links to → "Cat named Onix", "Onix health status"
+  if (rows.length > 0) {
     try {
-      const topIds = rows.slice(0, 3).map((r: Memory) => r.id);
+      const topIds = rows.slice(0, 5).map((r: Memory) => r.id);
+      const existingIds = new Set(rows.map((r: Memory) => r.id));
+      // How many graph results to fetch — fill up to limit, minimum 5
+      const graphLimit = Math.max(limit - rows.length, 5);
       const graphResults = await query<Memory>(
         `SELECT DISTINCT m.id, m.type, m.title, m.content, m.metadata, m.tags,
-                m.profile, m.project_path, ml.strength AS relevance, m.created_at
+                m.profile, m.project_path, ml.strength AS relevance, m.created_at::text
          FROM memory_links ml
          JOIN memories m ON m.id = CASE
            WHEN ml.source_id = ANY($1::uuid[]) THEN ml.target_id
@@ -165,13 +169,11 @@ export async function recall(opts: RecallOptions & { skipTouch?: boolean } = { q
          WHERE (ml.source_id = ANY($1::uuid[]) OR ml.target_id = ANY($1::uuid[]))
            AND m.id != ALL($1::uuid[])
            AND ml.strength >= 0.5
-           AND ml.relation != 'contradicts'
+           AND ml.relation NOT IN ('contradicts', 'supersedes')
          ORDER BY ml.strength DESC
          LIMIT $2`,
-        [topIds, limit - rows.length]
+        [topIds, graphLimit]
       );
-      // Append graph-discovered memories (avoid duplicates)
-      const existingIds = new Set(rows.map((r: Memory) => r.id));
       for (const gRow of graphResults.rows) {
         if (!existingIds.has(gRow.id)) {
           rows.push(gRow);
